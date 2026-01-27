@@ -1,0 +1,19 @@
+services:
+  qwen-tts:
+    build:
+      context: .
+      args:
+        USER_ID: ${USER_ID}
+        GROUP_ID: ${GROUP_ID}
+    user: "${USER_ID}:${GROUP_ID}"
+    env_file:
+      - .env
+    volumes:
+      - ./voices:/app/voices
+      - ./models:/app/models
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+      HUGGINGFACE_HUB_CACHE: /app/models
+      HF_HOME: /app/models

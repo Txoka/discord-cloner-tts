@@ -1,0 +1,38 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+- `app/` holds the Python application code.
+  - `app/main.py` is the entry point; it wires the Discord bot to the TTS engine.
+  - `app/discord/` contains bot and voice-channel behavior.
+  - `app/tts/` contains text handling, audio processing, prompts, and the TTS engine.
+  - `app/config.py` centralizes environment-driven settings.
+- `voices/` stores voice prompt data and generated assets (mounted into the container).
+- `Dockerfile`, `docker-compose.yml`, and `Makefile` define the containerized workflow.
+- `requirements.txt` pins Python dependencies (CUDA-enabled PyTorch wheels).
+
+## Build, Test, and Development Commands
+- `make build` — build the Docker image with your user/group IDs.
+- `make up` — run the service via Docker Compose (GPU-enabled; rebuilds if needed).
+- `make down` — stop and remove the Compose stack.
+- `make logs` — tail container logs.
+
+## Coding Style & Naming Conventions
+- Python 3.12; use 4-space indentation and match existing import/order patterns.
+- Keep type hints consistent with current modules (`from __future__ import annotations`).
+- Prefer descriptive module/function names (e.g., `engine.py`, `prompt.py`).
+- No formatter or linter is configured—keep changes minimal and consistent.
+
+## Testing Guidelines
+- No automated test suite is present.
+- If adding tests, keep them under a new `tests/` directory and document how to run them.
+
+## Commit & Pull Request Guidelines
+- This directory does not include Git history, so no commit conventions are available.
+- Use clear, imperative commit messages (e.g., “Add voice normalization options”).
+- PRs should describe behavior changes, configuration updates, and any new dependencies.
+- Include usage notes if new environment variables are introduced.
+
+## Security & Configuration Tips
+- Store secrets in `.env` (e.g., `DISCORD_TOKEN`) and avoid committing real tokens.
+- Model and runtime settings are controlled via `QWEN_TTS_*` env vars in `app/config.py`.
+- Voice data under `voices/` can contain user content; treat it as sensitive.

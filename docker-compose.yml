@@ -17,3 +17,16 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
       HUGGINGFACE_HUB_CACHE: /app/models
       HF_HOME: /app/models
+
+  qwen-tts-test:
+    build:
+      context: .
+      args:
+        USER_ID: ${USER_ID}
+        GROUP_ID: ${GROUP_ID}
+    user: "${USER_ID}:${GROUP_ID}"
+    working_dir: /app
+    volumes:
+      - ./:/app
+    command: ["pytest", "-q"]
+    profiles: ["test"]

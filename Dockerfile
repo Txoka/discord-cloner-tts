@@ -31,6 +31,8 @@ RUN groupadd -g "${GROUP_ID}" appuser \
     && mkdir -p /app/.numba_cache /app/model /app/voices \
     && chown -R appuser:appuser /app
 
+USER appuser
+
 COPY app ./app
 
 CMD ["python", "-m", "app.main"]

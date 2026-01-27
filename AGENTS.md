@@ -6,6 +6,7 @@
   - `app/discord/` contains bot and voice-channel behavior.
   - `app/tts/` contains text handling, audio processing, prompts, and the TTS engine.
   - `app/config.py` centralizes environment-driven settings.
+- `tests/` holds unit and integration tests with helper fakes under `tests/helpers/`.
 - `voices/` stores voice prompt data and generated assets (mounted into the container).
 - `Dockerfile`, `docker-compose.yml`, and `Makefile` define the containerized workflow.
 - `requirements.txt` pins Python dependencies (CUDA-enabled PyTorch wheels).

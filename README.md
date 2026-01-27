@@ -1,6 +1,6 @@
 # Discord Cloner TTS
 
-A Discord bot that joins a voice channel, reads a chosen text channel aloud, and uses per-user voice cloning powered by Qwen3-TTS.
+A Discord bot that joins a voice channel, reads a chosen text channel aloud, and uses per-user voice cloning powered by Qwen3-TTS via vLLM-Omni.
 
 ## What it does
 - Joins a voice channel and speaks messages from a selected text channel.
@@ -53,6 +53,7 @@ QWEN_TTS_DTYPE=bfloat16        # bfloat16|float16|float32
 QWEN_TTS_DEVICE=cuda           # cuda|cpu
 QWEN_TTS_LANG=Auto
 QWEN_TTS_MAX_NEW_TOKENS=2048
+QWEN_TTS_MAX_BATCH_SIZE=16   # Max TTS batch size (queue worker)
 
 # Volume normalization
 QWEN_TTS_NORM=none             # none|rms|peak

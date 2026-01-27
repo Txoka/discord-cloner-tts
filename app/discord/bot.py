@@ -159,20 +159,22 @@ class Bot(discord.Client):
                         pass
                 st.queue.task_done()
 
-    async def _join(self, interaction: discord.Interaction) -> None:
+    async def _join(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None = None) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
 
-        member = interaction.user
-        if not isinstance(member, discord.Member):
-            member = interaction.guild.get_member(interaction.user.id)
+        if channel is None:
+            member = interaction.user
+            if not isinstance(member, discord.Member):
+                member = interaction.guild.get_member(interaction.user.id)
 
-        if not member or not member.voice or not member.voice.channel:
-            await interaction.response.send_message("You are not in a voice channel.", ephemeral=True)
-            return
+            if not member or not member.voice or not member.voice.channel:
+                await interaction.response.send_message("You are not in a voice channel.", ephemeral=True)
+                return
 
-        channel = member.voice.channel
+            channel = member.voice.channel
+
         vc = interaction.guild.voice_client
         if vc and vc.is_connected():
             await vc.move_to(channel)

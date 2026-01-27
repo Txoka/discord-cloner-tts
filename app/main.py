@@ -25,9 +25,10 @@ def main() -> None:
 
     bot = Bot(tts)
 
-    @bot.tree.command(name="join", description="Join the voice channel you're currently in.")
-    async def join(interaction: discord.Interaction):
-        await bot._join(interaction)
+    @bot.tree.command(name="join", description="Join your current voice channel, or a specified one.")
+    @discord.app_commands.describe(channel="Optional voice channel to join")
+    async def join(interaction: discord.Interaction, channel: discord.VoiceChannel | None = None):
+        await bot._join(interaction, channel)
 
     @bot.tree.command(name="leave", description="Leave voice chat.")
     async def leave(interaction: discord.Interaction):

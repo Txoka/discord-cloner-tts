@@ -20,7 +20,7 @@ from app.config import (
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
 )
-from app.tts.audio import trim_silence_energy
+from app.tts.audio import to_mono_float32, trim_silence_energy
 from app.tts.engine import TTSEngine
 from app.tts.text import preprocess_discord_text
 
@@ -114,6 +114,25 @@ class Bot(discord.Client):
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
 
+    def _trim_tts_wav(self, wav_bytes: bytes) -> bytes:
+        """Best-effort trim of leading/trailing silence from TTS audio."""
+        try:
+            with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
+                data = f.read(dtype="float32", always_2d=False)
+                sr = f.samplerate
+        except Exception as exc:
+            LOG.warning("Failed to decode TTS wav for trimming: %s", exc)
+            return wav_bytes
+
+        audio = to_mono_float32(data)
+        trimmed = trim_silence_energy(audio, int(sr))
+        if trimmed.shape == audio.shape:
+            return wav_bytes
+
+        buf = io.BytesIO()
+        sf.write(buf, trimmed, int(sr), subtype="PCM_16", format="WAV")
+        return buf.getvalue()
+
     async def _player_worker(self, guild_id: int) -> None:
         """Single ordered pipeline per guild: dequeue chat messages in order, synthesize, then play.
 
@@ -140,6 +159,8 @@ class Bot(discord.Client):
                 if wav_bytes is None:
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     continue
+
+                wav_bytes = self._trim_tts_wav(wav_bytes)
 
                 src_buf = io.BytesIO(wav_bytes)
                 src = discord.FFmpegPCMAudio(

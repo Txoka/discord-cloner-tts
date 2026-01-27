@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -61,6 +62,7 @@ def prepare_tts_pcm(
     trim: bool = True,
 ) -> tuple[bytes, int, int]:
     """Decode WAV bytes, optionally trim, resample, and return (pcm_bytes, sr, channels)."""
+    start = time.monotonic()
     try:
         import soundfile as sf
     except Exception as exc:
@@ -78,7 +80,16 @@ def prepare_tts_pcm(
     if trim:
         audio = trim_silence_energy(audio, int(sr))
     resampled = resample_linear(audio, int(sr), int(target_sr))
-    return mono_to_stereo_int16_bytes(resampled), int(target_sr), 2
+    out = mono_to_stereo_int16_bytes(resampled)
+    LOG.debug(
+        "Prepared PCM in_bytes=%d out_bytes=%d sr_in=%d sr_out=%d ms=%.2f",
+        len(wav_bytes),
+        len(out),
+        int(sr),
+        int(target_sr),
+        (time.monotonic() - start) * 1000.0,
+    )
+    return out, int(target_sr), 2
 
 
 def rms_dbfs(x: np.ndarray, eps: float = 1e-12) -> float:

@@ -4,6 +4,7 @@ import asyncio
 import io
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
@@ -126,14 +127,22 @@ class Bot(discord.Client):
 
         while True:
             job = await st.queue.get()
+            queue_after_get = st.queue.qsize()
             wav_bytes: Optional[bytes] = None
             try:
                 if not vc.is_connected():
+                    LOG.info("Voice client disconnected guild_id=%s", guild_id)
                     break
 
                 # Await the engine batch queue in-order for this guild
                 try:
+                    wait_start = time.monotonic()
                     wav_bytes = await job.tts_future
+                    LOG.debug(
+                        "TTS future resolved guild_id=%s wait_ms=%.2f",
+                        guild_id,
+                        (time.monotonic() - wait_start) * 1000.0,
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -141,9 +150,19 @@ class Bot(discord.Client):
                     continue
                 if wav_bytes is None:
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
+                    LOG.debug("TTS returned empty guild_id=%s", guild_id)
                     continue
 
+                prep_start = time.monotonic()
                 pcm_bytes, _sr, _ch = await asyncio.to_thread(prepare_tts_pcm, wav_bytes, 48000, True)
+                LOG.debug(
+                    "PCM prep guild_id=%s in_bytes=%d out_bytes=%d prep_ms=%.2f queue_after_get=%d",
+                    guild_id,
+                    len(wav_bytes),
+                    len(pcm_bytes),
+                    (time.monotonic() - prep_start) * 1000.0,
+                    queue_after_get,
+                )
                 if not pcm_bytes:
                     LOG.debug("PCM conversion returned empty guild_id=%s", guild_id)
                     continue
@@ -161,7 +180,15 @@ class Bot(discord.Client):
                 LOG.debug("Playback start guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
                 vc.play(src, after=after_play)
                 await done.wait()
-                LOG.debug("Playback done guild_id=%s", guild_id)
+                duration_sec = 0.0
+                if _sr > 0 and _ch > 0:
+                    duration_sec = len(pcm_bytes) / float(_sr * _ch * 2)
+                LOG.info(
+                    "Playback done guild_id=%s seconds=%.2f queue_after=%d",
+                    guild_id,
+                    duration_sec,
+                    st.queue.qsize(),
+                )
 
             finally:
                 st.queue.task_done()
@@ -430,14 +457,22 @@ class Bot(discord.Client):
 
         # Only speak from selected text channel
         if int(message.channel.id) != int(st.text_channel_id):
+            LOG.debug(
+                "Skip message wrong channel guild_id=%s channel_id=%s expected=%s",
+                message.guild.id,
+                message.channel.id,
+                st.text_channel_id,
+            )
             return
 
         # Only speak if author has an enrolled prompt file
         if not self.tts.prompt_exists(int(message.author.id)):
+            LOG.debug("Skip message no prompt guild_id=%s user_id=%s", message.guild.id, message.author.id)
             return
 
         # If user is currently enrolling, don't queue TTS for them
         if int(message.author.id) in self._cloning_users:
+            LOG.debug("Skip message user cloning guild_id=%s user_id=%s", message.guild.id, message.author.id)
             return
 
         # Avoid massive / empty messages

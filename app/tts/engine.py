@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
-import tempfile
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List, Tuple
@@ -34,7 +34,7 @@ LOG = logging.getLogger("qwen-discord-tts")
 class _TTSRequest:
     user_id: int
     text: str
-    future: "asyncio.Future[Optional[Path]]"
+    future: "asyncio.Future[Optional[bytes]]"
 
 
 class TTSEngine:
@@ -81,17 +81,17 @@ class TTSEngine:
             if self._worker_task is None or self._worker_task.done():
                 self._worker_task = asyncio.create_task(self._queue_worker())
 
-    async def enqueue(self, user_id: int, text: str) -> "asyncio.Future[Optional[Path]]":
-        """Queue a TTS request and return a future that resolves to a temp WAV path (or None)."""
+    async def enqueue(self, user_id: int, text: str) -> "asyncio.Future[Optional[bytes]]":
+        """Queue a TTS request and return a future that resolves to in-memory WAV bytes (or None)."""
         await self._ensure_worker()
         assert self._queue is not None
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[Optional[Path]] = loop.create_future()
+        fut: asyncio.Future[Optional[bytes]] = loop.create_future()
         await self._queue.put(_TTSRequest(user_id=int(user_id), text=text, future=fut))
         return fut
 
-    async def synth_to_wavfile_async(self, user_id: int, text: str) -> Optional[Path]:
-        """Async wrapper that routes through the batch queue."""
+    async def synth_to_wavfile_async(self, user_id: int, text: str) -> Optional[bytes]:
+        """Async wrapper that routes through the batch queue (returns WAV bytes)."""
         fut = await self.enqueue(user_id, text)
         return await fut
 
@@ -133,18 +133,14 @@ class TTSEngine:
                     self._queue.task_done()
                 continue
 
-            for r, wav_path, err in results:
+            for r, wav_bytes, err in results:
                 try:
                     if r.future.cancelled():
-                        if wav_path is not None:
-                            try:
-                                wav_path.unlink(missing_ok=True)
-                            except Exception:
-                                pass
+                        pass
                     elif err is not None:
                         r.future.set_exception(err)
                     else:
-                        r.future.set_result(wav_path)
+                        r.future.set_result(wav_bytes)
                 finally:
                     self._queue.task_done()
 
@@ -270,15 +266,13 @@ class TTSEngine:
             text = text[:MAX_CHARS_PER_MESSAGE].rstrip() + "…"
         return text
 
-    def _write_wav(self, wav: Any, sr: int) -> Path:
+    def _write_wav(self, wav: Any, sr: int) -> bytes:
         wav = normalize_audio(to_mono_float32(wav))
-        td = tempfile.NamedTemporaryFile(prefix="qwen_discord_", suffix=".wav", delete=False)
-        td.close()
-        out = Path(td.name)
-        sf.write(str(out), wav, int(sr), subtype="PCM_16")
-        return out
+        buf = io.BytesIO()
+        sf.write(buf, wav, int(sr), subtype="PCM_16", format="WAV")
+        return buf.getvalue()
 
-    def _synth_from_prompt(self, prompt_items: List[VoiceClonePromptItem], text: str) -> Optional[Path]:
+    def _synth_from_prompt(self, prompt_items: List[VoiceClonePromptItem], text: str) -> Optional[bytes]:
         if self._model is None:
             raise RuntimeError("Model not loaded")
 
@@ -291,12 +285,13 @@ class TTSEngine:
             voice_clone_prompt=prompt_items,
             max_new_tokens=MAX_NEW_TOKENS,
         )
+
         return self._write_wav(wavs[0], int(sr))
 
     # -----------------------------
     # Correct batching (multi-speaker)
     # -----------------------------
-    def _process_batch(self, batch: list[_TTSRequest]) -> list[tuple[_TTSRequest, Optional[Path], Optional[Exception]]]:
+    def _process_batch(self, batch: list[_TTSRequest]) -> list[tuple[_TTSRequest, Optional[bytes], Optional[Exception]]]:
         """
         Correct batch behavior for vLLM-Omni:
 
@@ -332,36 +327,21 @@ class TTSEngine:
             return results
 
         # Fast path: real batch (multiple speakers)
-        if len(valid_reqs) > 1:
-            try:
-                wavs, sr = self._model.generate_voice_clone(
-                    text=texts,
-                    language=[DEFAULT_LANGUAGE] * len(texts),
-                    voice_clone_prompt=batch_prompt_items,  # <-- FIXED: list[VoiceClonePromptItem], len == len(texts)
-                    max_new_tokens=MAX_NEW_TOKENS,
-                )
-                for req, wav in zip(valid_reqs, wavs, strict=False):
-                    results.append((req, self._write_wav(wav, int(sr)), None))
-                return results
-            except Exception as exc:
-                LOG.warning("vLLM-Omni batch generate failed; falling back to per-item: %s", exc)
+        wavs, sr = self._model.generate_voice_clone(
+            text=texts,
+            language=[DEFAULT_LANGUAGE] * len(texts),
+            voice_clone_prompt=batch_prompt_items,  # <-- FIXED: list[VoiceClonePromptItem], len == len(texts)
+            max_new_tokens=MAX_NEW_TOKENS,
+        )
+        for req, wav in zip(valid_reqs, wavs, strict=False):
+            results.append((req, self._write_wav(wav, int(sr)), None))
 
-        # Fallback path: per-item (still correct, just slower)
-        for req in valid_reqs:
-            try:
-                prompt_items = self.get_prompt(req.user_id)
-                if prompt_items is None:
-                    results.append((req, None, None))
-                    continue
-                wav_path = self._synth_from_prompt(prompt_items, req.text)
-                results.append((req, wav_path, None))
-            except Exception as exc:
-                results.append((req, None, exc))
+        LOG.info("TTS batch finished")
 
         return results
 
-    def synth_to_wavfile(self, user_id: int, text: str) -> Optional[Path]:
-        """Blocking call. Returns a temp WAV path or None if user has no prompt file."""
+    def synth_to_wavfile(self, user_id: int, text: str) -> Optional[bytes]:
+        """Blocking call. Returns WAV bytes or None if user has no prompt file."""
         prompt = self.get_prompt(user_id)
         if prompt is None:
             return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 from dataclasses import dataclass
@@ -80,7 +81,7 @@ class SingleUserPCMCollector(voice_recv.AudioSink):
 # -----------------------------
 @dataclass
 class TTSJob:
-    tts_future: "asyncio.Future[Optional[Path]]"
+    tts_future: "asyncio.Future[Optional[bytes]]"
 
 
 @dataclass
@@ -123,26 +124,28 @@ class Bot(discord.Client):
 
         while True:
             job = await st.queue.get()
-            wav_path: Optional[Path] = None
+            wav_bytes: Optional[bytes] = None
             try:
                 if not vc.is_connected():
                     break
 
                 # Await the engine batch queue in-order for this guild
                 try:
-                    wav_path = await job.tts_future
+                    wav_bytes = await job.tts_future
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
                     LOG.warning("TTS error: %s", exc)
                     continue
-                if wav_path is None:
+                if wav_bytes is None:
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     continue
 
+                src_buf = io.BytesIO(wav_bytes)
                 src = discord.FFmpegPCMAudio(
                     executable="ffmpeg",
-                    source=str(wav_path),
+                    source=src_buf,
+                    pipe=True,
                     options="-loglevel warning -vn",
                 )
 
@@ -157,11 +160,6 @@ class Bot(discord.Client):
                 await done.wait()
 
             finally:
-                if wav_path is not None:
-                    try:
-                        wav_path.unlink(missing_ok=True)
-                    except Exception:
-                        pass
                 st.queue.task_done()
 
     async def _join(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None = None) -> None:

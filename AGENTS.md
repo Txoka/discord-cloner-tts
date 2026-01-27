@@ -36,3 +36,20 @@
 - Store secrets in `.env` (e.g., `DISCORD_TOKEN`) and avoid committing real tokens.
 - Model and runtime settings are controlled via `QWEN_TTS_*` env vars in `app/config.py`.
 - Voice data under `voices/` can contain user content; treat it as sensitive.
+
+## TTS Pipeline (Global Engine + Per-Guild Playback)
+```
+Discord message (guild text channel)
+  └─ on_message() in app/discord/bot.py
+      ├─ checks: guild connected, correct channel, user has prompt, not cloning
+      ├─ preprocess text
+      ├─ TTSEngine.enqueue(user_id, text)   <-- GLOBAL TTS QUEUE (all guilds)
+      │    └─ _queue_worker batches mixed users/guilds
+      │        └─ _process_batch -> model.generate_voice_clone(...)
+      │             └─ Future resolves to WAV bytes
+      └─ GuildState.queue.put(TTSJob(future))  <-- PER-GUILD QUEUE
+           └─ _player_worker(guild_id)
+               ├─ await future (synth result)
+               ├─ trim silence
+               └─ play in voice channel (ordered per guild)
+```

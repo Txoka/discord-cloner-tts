@@ -109,6 +109,7 @@ class Bot(discord.Client):
         self._cloning_users: set[int] = set()
 
     async def setup_hook(self):
+        LOG.info("Syncing application commands")
         await self.tree.sync()
 
     async def on_ready(self):
@@ -121,6 +122,7 @@ class Bot(discord.Client):
         """
         st = self.guild_state[guild_id]
         vc = st.voice_client
+        LOG.info("Player worker started guild_id=%s", guild_id)
 
         while True:
             job = await st.queue.get()
@@ -143,6 +145,7 @@ class Bot(discord.Client):
 
                 pcm_bytes, _sr, _ch = await asyncio.to_thread(prepare_tts_pcm, wav_bytes, 48000, True)
                 if not pcm_bytes:
+                    LOG.debug("PCM conversion returned empty guild_id=%s", guild_id)
                     continue
 
                 src_buf = io.BytesIO(pcm_bytes)
@@ -155,11 +158,14 @@ class Bot(discord.Client):
                         LOG.warning("Playback error: %s", err)
                     done.set()
 
+                LOG.debug("Playback start guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
                 vc.play(src, after=after_play)
                 await done.wait()
+                LOG.debug("Playback done guild_id=%s", guild_id)
 
             finally:
                 st.queue.task_done()
+        LOG.info("Player worker stopped guild_id=%s", guild_id)
 
     async def _join(self, interaction: discord.Interaction, channel: discord.VoiceChannel | None = None) -> None:
         if not interaction.guild:
@@ -217,6 +223,7 @@ class Bot(discord.Client):
             f"Joined **{channel.name}**. I will speak messages from <#{interaction.channel_id}>.",
             ephemeral=True,
         )
+        LOG.info("Joined voice guild_id=%s channel_id=%s", interaction.guild_id, channel.id)
 
     async def _leave(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
@@ -241,6 +248,7 @@ class Bot(discord.Client):
         await st.voice_client.disconnect(force=True)
         self.guild_state.pop(int(interaction.guild_id), None)
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
+        LOG.info("Left voice guild_id=%s", interaction.guild_id)
 
     async def _set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         if not interaction.guild:
@@ -252,6 +260,7 @@ class Bot(discord.Client):
             return
         st.text_channel_id = int(channel.id)
         await interaction.response.send_message(f"Now reading messages from {channel.mention}.", ephemeral=True)
+        LOG.info("Set text channel guild_id=%s channel_id=%s", interaction.guild_id, channel.id)
 
     async def _clone(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
@@ -273,6 +282,7 @@ class Bot(discord.Client):
             return
 
         await interaction.response.defer(ephemeral=True)
+        LOG.info("Clone started guild_id=%s user_id=%s", interaction.guild_id, interaction.user.id)
 
         async with lock:
             # Ensure bot is connected with VoiceRecvClient
@@ -377,6 +387,7 @@ class Bot(discord.Client):
                 # Clear cache so next synthesis reloads the fresh prompt
                 self.tts.prompt_cache.pop(out_pt, None)
                 self.tts.set_prompt_exists(int(member.id), True)
+                LOG.info("Clone saved guild_id=%s user_id=%s prompt=%s", interaction.guild_id, member.id, out_pt)
 
                 await interaction.followup.send(
                     "✅ Enrolled your voice.",
@@ -385,6 +396,7 @@ class Bot(discord.Client):
 
             finally:
                 self._cloning_users.discard(int(member.id))
+                LOG.info("Clone finished guild_id=%s user_id=%s", interaction.guild_id, member.id)
 
     async def _forget(self, interaction: discord.Interaction) -> None:
         """Forget the invoking user's enrolled voice (delete VOICES_DIR/<user_id>.pt)."""
@@ -406,6 +418,7 @@ class Bot(discord.Client):
             await interaction.followup.send("🧹 Deleted your enrolled prompt file.", ephemeral=True)
         else:
             await interaction.followup.send("No enrolled prompt file was found for you.", ephemeral=True)
+        LOG.info("Forget user_id=%s deleted=%s", user_id, changed)
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
@@ -438,3 +451,9 @@ class Bot(discord.Client):
         qsize = st.queue.qsize()
         if qsize and qsize % 10 == 0:
             LOG.info("Guild queue size=%d guild_id=%s", qsize, message.guild.id)
+        LOG.debug(
+            "Enqueued message guild_id=%s user_id=%s chars=%d",
+            message.guild.id,
+            message.author.id,
+            len(text),
+        )

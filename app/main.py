@@ -6,13 +6,17 @@ import os
 
 import discord
 
-from app.config import VOICES_DIR
+from app.config import DEVICE, DTYPE, LOG_LEVEL, MAX_BATCH_SIZE, MODEL_ID, NORM_MODE, VOICES_DIR
 from app.discord.bot import Bot
 from app.tts.engine import TTSEngine
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    log = logging.getLogger("qwen-discord-tts")
 
     token = os.environ.get("DISCORD_TOKEN")
     if not token:
@@ -22,6 +26,15 @@ def main() -> None:
 
     tts = TTSEngine(VOICES_DIR)
     tts.load_model()
+    log.info(
+        "Startup model=%s device=%s dtype=%s max_batch=%s norm_mode=%s voices_dir=%s",
+        MODEL_ID,
+        DEVICE,
+        DTYPE,
+        MAX_BATCH_SIZE,
+        NORM_MODE,
+        VOICES_DIR,
+    )
 
     bot = Bot(tts)
 

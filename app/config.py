@@ -17,6 +17,7 @@ DTYPE = os.environ.get("QWEN_TTS_DTYPE", "bfloat16")  # bfloat16|float16|float32
 DEVICE = os.environ.get("QWEN_TTS_DEVICE", "cuda")  # cuda|cpu
 DEFAULT_LANGUAGE = os.environ.get("QWEN_TTS_LANG", "Auto")
 MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
+LOG_LEVEL = os.environ.get("QWEN_TTS_LOG_LEVEL", "INFO")
 
 # Volume normalization (simple RMS normalization per utterance)
 NORM_MODE = os.environ.get("QWEN_TTS_NORM", "none")  # none|rms|peak

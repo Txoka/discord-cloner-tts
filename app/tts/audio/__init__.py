@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 import io
+import logging
 
 import numpy as np
 import torch
@@ -68,6 +69,7 @@ def prepare_tts_pcm(
             data = f.read(dtype="float32", always_2d=False)
             sr = f.samplerate
     except Exception:
+        LOG.debug("Failed decoding WAV bytes")
         return b"", 0, 0
 
     audio = to_mono_float32(data)
@@ -180,3 +182,4 @@ def trim_silence_energy(
         return x
 
     return x[start_samp:end_samp]
+LOG = logging.getLogger("qwen-discord-tts")

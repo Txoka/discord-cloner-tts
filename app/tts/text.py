@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 
 import discord
@@ -74,6 +75,7 @@ def preprocess_discord_text(message: discord.Message, max_chars: int = MAX_CHARS
     """Turn Discord message content into something TTS-friendly."""
     text = (message.clean_content or "").strip()
     if not text:
+        LOG.debug("Skipping empty message id=%s", getattr(message, "id", None))
         return ""
 
     # Convert markdown links to visible text (drop the URL)
@@ -97,5 +99,7 @@ def preprocess_discord_text(message: discord.Message, max_chars: int = MAX_CHARS
     # Enforce length cap after cleanup
     if len(text) > max_chars:
         text = text[:max_chars].rstrip() + "…"
+        LOG.debug("Trimmed message id=%s to %d chars", getattr(message, "id", None), max_chars)
 
     return text
+LOG = logging.getLogger("qwen-discord-tts")

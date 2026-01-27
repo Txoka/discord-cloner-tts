@@ -80,6 +80,7 @@ class TTSEngine:
             if self._queue is None:
                 self._queue = asyncio.Queue()
             if self._worker_task is None or self._worker_task.done():
+                LOG.info("Starting TTS queue worker")
                 self._worker_task = asyncio.create_task(self._queue_worker())
 
     async def enqueue(self, user_id: int, text: str) -> "asyncio.Future[Optional[bytes]]":
@@ -89,10 +90,12 @@ class TTSEngine:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Optional[bytes]] = loop.create_future()
         await self._queue.put(_TTSRequest(user_id=int(user_id), text=text, future=fut))
+        LOG.debug("Enqueued TTS user_id=%s queue_size=%d", user_id, self._queue.qsize())
         return fut
 
     async def _queue_worker(self) -> None:
         assert self._queue is not None
+        LOG.info("TTS worker loop running")
         while True:
             req = await self._queue.get()
             batch = [req]
@@ -158,6 +161,7 @@ class TTSEngine:
             return exists
         exists = self.prompt_path(user_id).exists()
         self._prompt_exists_cache[user_id] = exists
+        LOG.debug("Prompt exists user_id=%s exists=%s", user_id, exists)
         return exists
 
     def set_prompt_exists(self, user_id: int, exists: bool) -> None:
@@ -208,6 +212,7 @@ class TTSEngine:
                     ref_text=d.get("ref_text", None),
                 )
             )
+        LOG.info("Loaded prompt items count=%d path=%s", len(out), pt)
         return out
 
     def get_prompt(self, user_id: int) -> Optional[List[VoiceClonePromptItem]]:
@@ -253,6 +258,8 @@ class TTSEngine:
             )
         out_pt.parent.mkdir(parents=True, exist_ok=True)
         torch.save({"items": serial}, out_pt)
+        self._prompt_exists_cache[int(out_pt.stem)] = True
+        LOG.info("Saved prompt items count=%d path=%s", len(serial), out_pt)
 
     def forget_user(self, user_id: int, delete_pt: bool = True) -> bool:
         """Delete VOICES_DIR/<user_id>.pt and clear cache. Returns True if deleted."""
@@ -264,8 +271,10 @@ class TTSEngine:
         if delete_pt and pt.exists():
             try:
                 pt.unlink()
+                LOG.info("Deleted prompt file user_id=%s path=%s", user_id, pt)
                 return True
             except Exception:
+                LOG.warning("Failed deleting prompt file user_id=%s path=%s", user_id, pt)
                 return False
         return False
 
@@ -308,6 +317,7 @@ class TTSEngine:
         for req in batch:
             prompt_items = self.get_prompt(req.user_id)
             if prompt_items is None or len(prompt_items) == 0:
+                LOG.debug("Prompt missing for user_id=%s", req.user_id)
                 results.append((req, None, None))
                 continue
 

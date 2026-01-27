@@ -4,6 +4,7 @@ import numpy as np
 import torch
 
 import app.tts.audio as audio
+import app.tts.audio.utils as audio_utils
 
 
 def test_to_mono_float32_from_tensor():
@@ -27,26 +28,26 @@ def test_rms_peak_dbfs_ranges():
 
 
 def test_normalize_audio_none(monkeypatch):
-    monkeypatch.setattr(audio, "NORM_MODE", "none")
+    monkeypatch.setattr(audio_utils, "NORM_MODE", "none")
     x = np.array([0.1, -0.1], dtype=np.float32)
     out = audio.normalize_audio(x)
     assert np.allclose(out, x)
 
 
 def test_normalize_audio_peak(monkeypatch):
-    monkeypatch.setattr(audio, "NORM_MODE", "peak")
-    monkeypatch.setattr(audio, "TARGET_PEAK_DBFS", -1.0)
-    monkeypatch.setattr(audio, "MAX_GAIN_DB", 12.0)
+    monkeypatch.setattr(audio_utils, "NORM_MODE", "peak")
+    monkeypatch.setattr(audio_utils, "TARGET_PEAK_DBFS", -1.0)
+    monkeypatch.setattr(audio_utils, "MAX_GAIN_DB", 12.0)
     x = np.array([0.1, -0.1], dtype=np.float32)
     out = audio.normalize_audio(x)
     assert np.max(np.abs(out)) <= 1.0
 
 
 def test_normalize_audio_rms(monkeypatch):
-    monkeypatch.setattr(audio, "NORM_MODE", "rms")
-    monkeypatch.setattr(audio, "TARGET_RMS_DBFS", -20.0)
-    monkeypatch.setattr(audio, "TARGET_PEAK_DBFS", -1.0)
-    monkeypatch.setattr(audio, "MAX_GAIN_DB", 12.0)
+    monkeypatch.setattr(audio_utils, "NORM_MODE", "rms")
+    monkeypatch.setattr(audio_utils, "TARGET_RMS_DBFS", -20.0)
+    monkeypatch.setattr(audio_utils, "TARGET_PEAK_DBFS", -1.0)
+    monkeypatch.setattr(audio_utils, "MAX_GAIN_DB", 12.0)
     x = np.ones((1000,), dtype=np.float32) * 0.01
     out = audio.normalize_audio(x)
     assert out.dtype == np.float32

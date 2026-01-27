@@ -80,8 +80,7 @@ class SingleUserPCMCollector(voice_recv.AudioSink):
 # -----------------------------
 @dataclass
 class TTSJob:
-    user_id: int
-    text: str
+    tts_future: "asyncio.Future[Optional[Path]]"
 
 
 @dataclass
@@ -129,8 +128,14 @@ class Bot(discord.Client):
                 if not vc.is_connected():
                     break
 
-                # Synthesize in-order (in a thread so we don't block the loop)
-                wav_path = await asyncio.to_thread(self.tts.synth_to_wavfile, int(job.user_id), job.text)
+                # Await the engine batch queue in-order for this guild
+                try:
+                    wav_path = await job.tts_future
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    LOG.warning("TTS error: %s", exc)
+                    continue
                 if wav_path is None:
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     continue
@@ -192,6 +197,13 @@ class Bot(discord.Client):
                 old.worker_task.cancel()
             except Exception:
                 pass
+            while True:
+                try:
+                    job = old.queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                job.tts_future.cancel()
+                old.queue.task_done()
 
         # Create state first, then start worker (avoid KeyError race)
         placeholder_task = asyncio.create_task(asyncio.sleep(0))
@@ -222,6 +234,13 @@ class Bot(discord.Client):
             st.worker_task.cancel()
         except Exception:
             pass
+        while True:
+            try:
+                job = st.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            job.tts_future.cancel()
+            st.queue.task_done()
         await st.voice_client.disconnect(force=True)
         self.guild_state.pop(int(interaction.guild_id), None)
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
@@ -415,5 +434,6 @@ class Bot(discord.Client):
         if not text:
             return
 
-        # Enqueue the text job; the guild worker will synth+play strictly in chat order
-        await st.queue.put(TTSJob(user_id=int(message.author.id), text=text))
+        # Enqueue TTS in the engine, then queue playback in-order for this guild
+        tts_future = await self.tts.enqueue(int(message.author.id), text)
+        await st.queue.put(TTSJob(tts_future=tts_future))

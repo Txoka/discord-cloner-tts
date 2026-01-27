@@ -3,15 +3,15 @@ discord-ext-voice-recv==0.5.2a179
 discord.py==2.6.4
 emoji==2.15.0
 einops==0.8.1
-flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.2/flash_attn-2.6.3%2Bcu128torch2.8-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
-gradio==6.4.0
+flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.11/flash_attn-2.6.3+cu129torch2.9-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl
 librosa==0.11.0
-numpy==2.3.5
 onnxruntime==1.23.2
 python-dotenv==1.1.1
-qwen-tts==0.0.5
+vllm==0.14.1
+vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git
+qwen-omni-utils==0.0.8
 soundfile==0.13.1
 sox==1.5.0
-torch==2.8.0
-torchaudio==2.8.0
+torch==2.9.1
+torchaudio==2.9.1
 transformers==4.57.3

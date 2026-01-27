@@ -12,6 +12,7 @@ RUN apt-get update \
         ffmpeg \
         sox \
         libsndfile1 \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -20,7 +21,7 @@ COPY requirements.txt ./
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
-    && /opt/venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cu128 -r requirements.txt
+    && /opt/venv/bin/pip install --extra-index-url https://download.pytorch.org/whl/cu129 -r requirements.txt
 
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV NUMBA_CACHE_DIR="/app/.numba_cache"

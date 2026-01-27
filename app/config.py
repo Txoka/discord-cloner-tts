@@ -26,6 +26,7 @@ MAX_GAIN_DB = float(os.environ.get("QWEN_TTS_MAX_GAIN_DB", "12"))
 
 # Text handling
 MAX_CHARS_PER_MESSAGE = int(os.environ.get("QWEN_TTS_MAX_CHARS", "1024"))
+MAX_BATCH_SIZE = max(1, int(os.environ.get("QWEN_TTS_MAX_BATCH_SIZE", "16")))
 
 # Voice-clone capture
 CLONE_RECORD_SECONDS = int(os.environ.get("QWEN_TTS_CLONE_SECONDS", "20"))

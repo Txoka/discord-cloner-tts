@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import numpy as np
 import pytest
 
 import app.discord.bot as bot_mod
@@ -23,17 +22,15 @@ def test_single_user_pcm_collector_ignores_other_user():
     assert collector.mono_float32().size == 0
 
 
-def test_prepare_tts_pcm_invalid_bytes_returns_empty():
-    bot = Bot(tts=None)  # type: ignore[arg-type]
-    bad = b"not a wav"
-    assert bot._prepare_tts_pcm(bad) == b""
-
-
 @pytest.mark.asyncio
 async def test_player_worker_orders_playback(monkeypatch):
     vc = FakeVoiceClient()
     bot = Bot(tts=None)  # type: ignore[arg-type]
-    monkeypatch.setattr(bot, "_prepare_tts_pcm", lambda b: b"pcm:" + b)
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b"pcm:" + b, 48000, 2))
     monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
     q: asyncio.Queue[TTSJob] = asyncio.Queue()

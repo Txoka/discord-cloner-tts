@@ -35,6 +35,7 @@ class FakeTTS:
     def __init__(self, voices_dir):
         self._voices_dir = voices_dir
         self.prompt_cache = {}
+        self.exists_cache = {}
 
     def prompt_path(self, user_id: int):
         return self._voices_dir / f"{user_id}.pt"
@@ -44,6 +45,9 @@ class FakeTTS:
 
     def save_prompt_items_pt(self, prompt_items, out_pt):
         out_pt.write_bytes(b"ok")
+
+    def set_prompt_exists(self, user_id: int, exists: bool) -> None:
+        self.exists_cache[int(user_id)] = bool(exists)
 
 
 @pytest.mark.asyncio

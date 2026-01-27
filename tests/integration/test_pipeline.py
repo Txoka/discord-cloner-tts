@@ -33,7 +33,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
     engine._process_batch = fake_process  # type: ignore[assignment]
 
     bot = Bot(tts=engine)
-    monkeypatch.setattr(bot, "_prepare_tts_pcm", lambda b: b)
+    monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
     monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
     for gid in (1, 2):

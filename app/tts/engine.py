@@ -42,6 +42,7 @@ class TTSEngine:
         self.voices_dir = voices_dir
         # Cache: <user_id>.pt -> list[VoiceClonePromptItem]
         self.prompt_cache: Dict[Path, List[VoiceClonePromptItem]] = {}
+        self._prompt_exists_cache: Dict[int, bool] = {}
 
         self._model: Optional[Qwen3TTSModel] = None
         self._queue: Optional[asyncio.Queue[_TTSRequest]] = None
@@ -146,7 +147,21 @@ class TTSEngine:
         return (self.voices_dir / f"{int(user_id)}.pt").resolve()
 
     def prompt_exists(self, user_id: int) -> bool:
-        return self.prompt_path(user_id).exists()
+        user_id = int(user_id)
+        cached = self._prompt_exists_cache.get(user_id)
+        if cached is not None:
+            if cached:
+                return True
+            exists = self.prompt_path(user_id).exists()
+            if exists:
+                self._prompt_exists_cache[user_id] = True
+            return exists
+        exists = self.prompt_path(user_id).exists()
+        self._prompt_exists_cache[user_id] = exists
+        return exists
+
+    def set_prompt_exists(self, user_id: int, exists: bool) -> None:
+        self._prompt_exists_cache[int(user_id)] = bool(exists)
 
     def _load_prompt_items_from_pt(self, pt: Path) -> List[VoiceClonePromptItem]:
         """
@@ -241,8 +256,10 @@ class TTSEngine:
 
     def forget_user(self, user_id: int, delete_pt: bool = True) -> bool:
         """Delete VOICES_DIR/<user_id>.pt and clear cache. Returns True if deleted."""
+        user_id = int(user_id)
         pt = self.prompt_path(user_id)
         self.prompt_cache.pop(pt, None)
+        self._prompt_exists_cache[user_id] = False
 
         if delete_pt and pt.exists():
             try:

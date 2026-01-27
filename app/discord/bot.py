@@ -20,7 +20,7 @@ from app.config import (
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
 )
-from app.tts.audio import mono_to_stereo_int16_bytes, resample_linear, to_mono_float32, trim_silence_energy
+from app.tts.audio import prepare_tts_pcm, trim_silence_energy
 from app.tts.engine import TTSEngine
 from app.tts.text import preprocess_discord_text
 
@@ -114,21 +114,6 @@ class Bot(discord.Client):
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
 
-    def _prepare_tts_pcm(self, wav_bytes: bytes) -> bytes:
-        """Decode WAV, trim, resample to 48k, and return raw stereo PCM16 bytes."""
-        try:
-            with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
-                data = f.read(dtype="float32", always_2d=False)
-                sr = f.samplerate
-        except Exception as exc:
-            LOG.warning("Failed to decode TTS wav for PCM conversion: %s", exc)
-            return b""
-
-        audio = to_mono_float32(data)
-        trimmed = trim_silence_energy(audio, int(sr))
-        resampled = resample_linear(trimmed, int(sr), 48000)
-        return mono_to_stereo_int16_bytes(resampled)
-
     async def _player_worker(self, guild_id: int) -> None:
         """Single ordered pipeline per guild: dequeue chat messages in order, synthesize, then play.
 
@@ -156,7 +141,7 @@ class Bot(discord.Client):
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     continue
 
-                pcm_bytes = await asyncio.to_thread(self._prepare_tts_pcm, wav_bytes)
+                pcm_bytes, _sr, _ch = await asyncio.to_thread(prepare_tts_pcm, wav_bytes, 48000, True)
                 if not pcm_bytes:
                     continue
 
@@ -391,6 +376,7 @@ class Bot(discord.Client):
 
                 # Clear cache so next synthesis reloads the fresh prompt
                 self.tts.prompt_cache.pop(out_pt, None)
+                self.tts.set_prompt_exists(int(member.id), True)
 
                 await interaction.followup.send(
                     "✅ Enrolled your voice.",
@@ -449,3 +435,6 @@ class Bot(discord.Client):
         # Enqueue TTS in the engine, then queue playback in-order for this guild
         tts_future = await self.tts.enqueue(int(message.author.id), text)
         await st.queue.put(TTSJob(tts_future=tts_future))
+        qsize = st.queue.qsize()
+        if qsize and qsize % 10 == 0:
+            LOG.info("Guild queue size=%d guild_id=%s", qsize, message.guild.id)

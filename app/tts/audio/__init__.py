@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+import io
 
 import numpy as np
 import torch
 
-from app.config import (
-    MAX_GAIN_DB,
-    NORM_MODE,
-    TARGET_PEAK_DBFS,
-    TARGET_RMS_DBFS,
-)
+from app.config import MAX_GAIN_DB, NORM_MODE, TARGET_PEAK_DBFS, TARGET_RMS_DBFS
 
 
 def to_mono_float32(wav: Any) -> np.ndarray:
@@ -54,6 +50,31 @@ def mono_to_stereo_int16_bytes(x: np.ndarray) -> bytes:
     mono_i16 = (x * np.float32(32767.0)).astype(np.int16, copy=False)
     stereo = np.repeat(mono_i16[:, None], 2, axis=1)
     return stereo.tobytes()
+
+
+def prepare_tts_pcm(
+    wav_bytes: bytes,
+    target_sr: int = 48000,
+    trim: bool = True,
+) -> tuple[bytes, int, int]:
+    """Decode WAV bytes, optionally trim, resample, and return (pcm_bytes, sr, channels)."""
+    try:
+        import soundfile as sf
+    except Exception as exc:
+        raise RuntimeError("soundfile is required to decode WAV bytes") from exc
+
+    try:
+        with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
+            data = f.read(dtype="float32", always_2d=False)
+            sr = f.samplerate
+    except Exception:
+        return b"", 0, 0
+
+    audio = to_mono_float32(data)
+    if trim:
+        audio = trim_silence_energy(audio, int(sr))
+    resampled = resample_linear(audio, int(sr), int(target_sr))
+    return mono_to_stereo_int16_bytes(resampled), int(target_sr), 2
 
 
 def rms_dbfs(x: np.ndarray, eps: float = 1e-12) -> float:

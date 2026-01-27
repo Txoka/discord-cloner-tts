@@ -68,3 +68,10 @@ def test_trim_silence_energy_all_silence():
     x = np.zeros((sr,), dtype=np.float32)
     out = audio.trim_silence_energy(x, sr)
     assert out.size == x.size
+
+
+def test_prepare_tts_pcm_invalid_bytes_returns_empty():
+    out, sr, ch = audio.prepare_tts_pcm(b"not a wav")
+    assert out == b""
+    assert sr == 0
+    assert ch == 0

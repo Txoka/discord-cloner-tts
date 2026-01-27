@@ -1,24 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import io
-
 import numpy as np
 import pytest
 
 import app.discord.bot as bot_mod
 from app.discord.bot import Bot, GuildState, TTSJob
-from tests.helpers.fakes import (
-    FakeChannel,
-    FakeGuild,
-    FakeMessage,
-    FakeUser,
-    FakeVoiceClient,
-)
+from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
-class FakeFFmpegPCMAudio:
-    def __init__(self, executable: str, source: io.BytesIO, pipe: bool, options: str):
+class FakePCMAudio:
+    def __init__(self, source):
         self.source = source
 
 
@@ -31,18 +23,18 @@ def test_single_user_pcm_collector_ignores_other_user():
     assert collector.mono_float32().size == 0
 
 
-def test_trim_tts_wav_invalid_bytes_returns_original():
+def test_prepare_tts_pcm_invalid_bytes_returns_empty():
     bot = Bot(tts=None)  # type: ignore[arg-type]
     bad = b"not a wav"
-    assert bot._trim_tts_wav(bad) == bad
+    assert bot._prepare_tts_pcm(bad) == b""
 
 
 @pytest.mark.asyncio
 async def test_player_worker_orders_playback(monkeypatch):
     vc = FakeVoiceClient()
     bot = Bot(tts=None)  # type: ignore[arg-type]
-    monkeypatch.setattr(bot, "_trim_tts_wav", lambda b: b)
-    monkeypatch.setattr(bot_mod.discord, "FFmpegPCMAudio", FakeFFmpegPCMAudio)
+    monkeypatch.setattr(bot, "_prepare_tts_pcm", lambda b: b"pcm:" + b)
+    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
     q: asyncio.Queue[TTSJob] = asyncio.Queue()
     guild_id = 1
@@ -67,7 +59,7 @@ async def test_player_worker_orders_playback(monkeypatch):
     await q.join()
     worker.cancel()
 
-    assert vc.play_calls == [b"one", b"two"]
+    assert vc.play_calls == [b"pcm:one", b"pcm:two"]
 
 
 @pytest.mark.asyncio

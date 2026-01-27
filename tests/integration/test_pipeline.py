@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
-
 import pytest
 
 import app.discord.bot as bot_mod
@@ -11,8 +9,8 @@ from app.tts.engine import TTSEngine
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
-class FakeFFmpegPCMAudio:
-    def __init__(self, executable: str, source: io.BytesIO, pipe: bool, options: str):
+class FakePCMAudio:
+    def __init__(self, source):
         self.source = source
 
 
@@ -35,8 +33,8 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
     engine._process_batch = fake_process  # type: ignore[assignment]
 
     bot = Bot(tts=engine)
-    monkeypatch.setattr(bot, "_trim_tts_wav", lambda b: b)
-    monkeypatch.setattr(bot_mod.discord, "FFmpegPCMAudio", FakeFFmpegPCMAudio)
+    monkeypatch.setattr(bot, "_prepare_tts_pcm", lambda b: b)
+    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
     for gid in (1, 2):
         vc = FakeVoiceClient()

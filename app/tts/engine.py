@@ -90,11 +90,6 @@ class TTSEngine:
         await self._queue.put(_TTSRequest(user_id=int(user_id), text=text, future=fut))
         return fut
 
-    async def synth_to_wavfile_async(self, user_id: int, text: str) -> Optional[bytes]:
-        """Async wrapper that routes through the batch queue (returns WAV bytes)."""
-        fut = await self.enqueue(user_id, text)
-        return await fut
-
     async def _queue_worker(self) -> None:
         assert self._queue is not None
         while True:
@@ -272,22 +267,6 @@ class TTSEngine:
         sf.write(buf, wav, int(sr), subtype="PCM_16", format="WAV")
         return buf.getvalue()
 
-    def _synth_from_prompt(self, prompt_items: List[VoiceClonePromptItem], text: str) -> Optional[bytes]:
-        if self._model is None:
-            raise RuntimeError("Model not loaded")
-
-        text = self._sanitize_text(text)
-
-        # Single request: pass the (possibly multi-item) prompt as-is.
-        wavs, sr = self._model.generate_voice_clone(
-            text=text,
-            language=DEFAULT_LANGUAGE,
-            voice_clone_prompt=prompt_items,
-            max_new_tokens=MAX_NEW_TOKENS,
-        )
-
-        return self._write_wav(wavs[0], int(sr))
-
     # -----------------------------
     # Correct batching (multi-speaker)
     # -----------------------------
@@ -339,10 +318,3 @@ class TTSEngine:
         LOG.info("TTS batch finished")
 
         return results
-
-    def synth_to_wavfile(self, user_id: int, text: str) -> Optional[bytes]:
-        """Blocking call. Returns WAV bytes or None if user has no prompt file."""
-        prompt = self.get_prompt(user_id)
-        if prompt is None:
-            return None
-        return self._synth_from_prompt(prompt, text)

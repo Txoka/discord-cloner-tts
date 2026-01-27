@@ -30,6 +30,32 @@ def to_mono_float32(wav: Any) -> np.ndarray:
     return np.clip(x, -1.0, 1.0)
 
 
+def resample_linear(x: np.ndarray, sr: int, target_sr: int) -> np.ndarray:
+    if sr == target_sr or x.size == 0:
+        return x.astype(np.float32, copy=False)
+    if sr <= 0 or target_sr <= 0:
+        raise ValueError("Sample rates must be positive")
+
+    x = x.astype(np.float32, copy=False)
+    n_in = x.size
+    n_out = int(round(n_in * float(target_sr) / float(sr)))
+    if n_out <= 1:
+        return x[:1].astype(np.float32, copy=False)
+
+    t_in = np.linspace(0.0, 1.0, num=n_in, endpoint=True, dtype=np.float32)
+    t_out = np.linspace(0.0, 1.0, num=n_out, endpoint=True, dtype=np.float32)
+    return np.interp(t_out, t_in, x).astype(np.float32, copy=False)
+
+
+def mono_to_stereo_int16_bytes(x: np.ndarray) -> bytes:
+    if x.size == 0:
+        return b""
+    x = np.clip(x.astype(np.float32, copy=False), -1.0, 1.0)
+    mono_i16 = (x * np.float32(32767.0)).astype(np.int16, copy=False)
+    stereo = np.repeat(mono_i16[:, None], 2, axis=1)
+    return stereo.tobytes()
+
+
 def rms_dbfs(x: np.ndarray, eps: float = 1e-12) -> float:
     rms = float(np.sqrt(np.mean(x.astype(np.float32) ** 2) + eps))
     return 20.0 * float(np.log10(max(rms, eps)))

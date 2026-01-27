@@ -20,7 +20,7 @@ from app.config import (
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
 )
-from app.tts.audio import to_mono_float32, trim_silence_energy
+from app.tts.audio import mono_to_stereo_int16_bytes, resample_linear, to_mono_float32, trim_silence_energy
 from app.tts.engine import TTSEngine
 from app.tts.text import preprocess_discord_text
 
@@ -114,24 +114,20 @@ class Bot(discord.Client):
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
 
-    def _trim_tts_wav(self, wav_bytes: bytes) -> bytes:
-        """Best-effort trim of leading/trailing silence from TTS audio."""
+    def _prepare_tts_pcm(self, wav_bytes: bytes) -> bytes:
+        """Decode WAV, trim, resample to 48k, and return raw stereo PCM16 bytes."""
         try:
             with sf.SoundFile(io.BytesIO(wav_bytes)) as f:
                 data = f.read(dtype="float32", always_2d=False)
                 sr = f.samplerate
         except Exception as exc:
-            LOG.warning("Failed to decode TTS wav for trimming: %s", exc)
-            return wav_bytes
+            LOG.warning("Failed to decode TTS wav for PCM conversion: %s", exc)
+            return b""
 
         audio = to_mono_float32(data)
         trimmed = trim_silence_energy(audio, int(sr))
-        if trimmed.shape == audio.shape:
-            return wav_bytes
-
-        buf = io.BytesIO()
-        sf.write(buf, trimmed, int(sr), subtype="PCM_16", format="WAV")
-        return buf.getvalue()
+        resampled = resample_linear(trimmed, int(sr), 48000)
+        return mono_to_stereo_int16_bytes(resampled)
 
     async def _player_worker(self, guild_id: int) -> None:
         """Single ordered pipeline per guild: dequeue chat messages in order, synthesize, then play.
@@ -160,15 +156,12 @@ class Bot(discord.Client):
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     continue
 
-                wav_bytes = self._trim_tts_wav(wav_bytes)
+                pcm_bytes = await asyncio.to_thread(self._prepare_tts_pcm, wav_bytes)
+                if not pcm_bytes:
+                    continue
 
-                src_buf = io.BytesIO(wav_bytes)
-                src = discord.FFmpegPCMAudio(
-                    executable="ffmpeg",
-                    source=src_buf,
-                    pipe=True,
-                    options="-loglevel warning -vn",
-                )
+                src_buf = io.BytesIO(pcm_bytes)
+                src = discord.PCMAudio(src_buf)
 
                 done = asyncio.Event()
 

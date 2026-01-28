@@ -78,6 +78,21 @@ class SingleUserPCMCollector(voice_recv.AudioSink):
 
 
 # -----------------------------
+# Voice client with safety guard for voice-recv cleanup races
+# -----------------------------
+class SafeVoiceRecvClient(voice_recv.VoiceRecvClient):
+    """Guard against voice-recv cleanup races when stopping listening."""
+
+    def _remove_ssrc(self, user_id: int) -> None:  # pragma: no cover - lib-level guard
+        reader = getattr(self, "_reader", None)
+        if reader is None or reader is discord.utils.MISSING:
+            return
+        if not hasattr(reader, "speaking_timer"):
+            return
+        super()._remove_ssrc(user_id=user_id)
+
+
+# -----------------------------
 # Guild voice player with queue
 # -----------------------------
 @dataclass
@@ -88,6 +103,7 @@ class TTSJob:
 @dataclass
 class GuildState:
     voice_client: discord.VoiceClient
+    voice_channel_id: int
     text_channel_id: int
     queue: "asyncio.Queue[TTSJob]"
     worker_task: asyncio.Task
@@ -122,7 +138,6 @@ class Bot(discord.Client):
         This guarantees voice playback follows chat order even if later messages would synth faster.
         """
         st = self.guild_state[guild_id]
-        vc = st.voice_client
         LOG.info("Player worker started guild_id=%s", guild_id)
 
         while True:
@@ -130,9 +145,16 @@ class Bot(discord.Client):
             queue_after_get = st.queue.qsize()
             wav_bytes: Optional[bytes] = None
             try:
-                if not vc.is_connected():
-                    LOG.info("Voice client disconnected guild_id=%s", guild_id)
-                    break
+                # Wait for voice client connectivity before consuming the job.
+                while True:
+                    # Refresh voice client reference in case it was replaced/reconnected.
+                    st = self.guild_state.get(guild_id, st)
+                    vc = st.voice_client
+                    if vc.is_connected():
+                        break
+                    LOG.info("Voice client disconnected guild_id=%s; attempting reconnect", guild_id)
+                    await self._ensure_voice_connected(guild_id)
+                    await asyncio.sleep(1.0)
 
                 # Await the engine batch queue in-order for this guild
                 try:
@@ -178,8 +200,26 @@ class Bot(discord.Client):
                     done.set()
 
                 LOG.debug("Playback start guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
-                vc.play(src, after=after_play)
-                await done.wait()
+                if vc.is_playing():
+                    LOG.warning("Voice client already playing guild_id=%s; stopping stale audio", guild_id)
+                    vc.stop()
+                try:
+                    vc.play(src, after=after_play)
+                except discord.ClientException as exc:
+                    LOG.warning("Playback start failed guild_id=%s err=%s", guild_id, exc)
+                    continue
+
+                playback_timeout = 0.0
+                if _sr > 0 and _ch > 0:
+                    playback_timeout = len(pcm_bytes) / float(_sr * _ch * 2) + 5.0
+                else:
+                    playback_timeout = 15.0
+                try:
+                    await asyncio.wait_for(done.wait(), timeout=playback_timeout)
+                except asyncio.TimeoutError:
+                    LOG.warning("Playback timeout guild_id=%s timeout=%.2f", guild_id, playback_timeout)
+                    vc.stop()
+                    continue
                 duration_sec = 0.0
                 if _sr > 0 and _ch > 0:
                     duration_sec = len(pcm_bytes) / float(_sr * _ch * 2)
@@ -215,7 +255,7 @@ class Bot(discord.Client):
             await vc.move_to(channel)
         else:
             # IMPORTANT: VoiceRecvClient enables receiving audio for /clone
-            vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
+            vc = await channel.connect(cls=SafeVoiceRecvClient)
 
         q: asyncio.Queue[TTSJob] = asyncio.Queue()
         guild_id = int(interaction.guild_id)
@@ -239,6 +279,7 @@ class Bot(discord.Client):
         placeholder_task = asyncio.create_task(asyncio.sleep(0))
         self.guild_state[guild_id] = GuildState(
             voice_client=vc,
+            voice_channel_id=int(channel.id),
             text_channel_id=int(interaction.channel_id),
             queue=q,
             worker_task=placeholder_task,
@@ -276,6 +317,26 @@ class Bot(discord.Client):
         self.guild_state.pop(int(interaction.guild_id), None)
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
         LOG.info("Left voice guild_id=%s", interaction.guild_id)
+
+    async def _ensure_voice_connected(self, guild_id: int) -> None:
+        st = self.guild_state.get(guild_id)
+        if not st:
+            return
+        vc = st.voice_client
+        if vc.is_connected():
+            return
+        guild = self.get_guild(guild_id)
+        if not guild:
+            return
+        channel = guild.get_channel(int(st.voice_channel_id))
+        if not isinstance(channel, discord.VoiceChannel):
+            return
+        try:
+            new_vc = await channel.connect(cls=SafeVoiceRecvClient, reconnect=True)
+        except Exception as exc:
+            LOG.warning("Reconnect failed guild_id=%s channel_id=%s err=%s", guild_id, st.voice_channel_id, exc)
+            return
+        st.voice_client = new_vc
 
     async def _set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         if not interaction.guild:
@@ -316,12 +377,13 @@ class Bot(discord.Client):
             st = self.guild_state.get(guild_id)
             if not st or not st.voice_client.is_connected():
                 # connect and create state
-                vc = await member.voice.channel.connect(cls=voice_recv.VoiceRecvClient)
+                vc = await member.voice.channel.connect(cls=SafeVoiceRecvClient)
                 q: asyncio.Queue[TTSJob] = asyncio.Queue()
 
                 placeholder_task = asyncio.create_task(asyncio.sleep(0))
                 self.guild_state[guild_id] = GuildState(
                     voice_client=vc,
+                    voice_channel_id=int(member.voice.channel.id),
                     text_channel_id=int(interaction.channel_id),
                     queue=q,
                     worker_task=placeholder_task,
@@ -333,6 +395,7 @@ class Bot(discord.Client):
                 # move to caller channel (so we can hear them)
                 try:
                     await st.voice_client.move_to(member.voice.channel)
+                    st.voice_channel_id = int(member.voice.channel.id)
                 except Exception:
                     pass
 

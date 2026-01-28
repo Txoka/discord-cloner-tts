@@ -60,6 +60,20 @@ def main() -> None:
     async def forget(interaction: discord.Interaction):
         await bot._forget(interaction)
 
+    @bot.tree.command(name="disguise", description="Admins only: speak using someone else's voice.")
+    @discord.app_commands.describe(target="User whose voice you want to use")
+    async def disguise(interaction: discord.Interaction, target: discord.Member):
+        await bot._disguise(interaction, target)
+
+    @bot.tree.command(name="addadmin", description="Admins only: add another admin (txoka only).")
+    @discord.app_commands.describe(target="User to grant admin access")
+    async def addadmin(interaction: discord.Interaction, target: discord.Member):
+        await bot._add_admin(interaction, target)
+
+    @bot.tree.command(name="sync", description="Owner only: sync slash commands.")
+    async def sync(interaction: discord.Interaction):
+        await bot._sync_commands(interaction)
+
     bot.run(token)
 
 

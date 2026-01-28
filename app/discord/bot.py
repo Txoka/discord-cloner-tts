@@ -124,10 +124,22 @@ class Bot(discord.Client):
         # Prevent concurrent enrollments per guild + suppress TTS for enrolling user
         self._clone_lock: Dict[int, asyncio.Lock] = {}
         self._cloning_users: set[int] = set()
+        self._admins: set[int] = {441597233150951425}
+        self._disguises: Dict[int, int] = {}
+
+    def _is_admin(self, user_id: int) -> bool:
+        return int(user_id) in self._admins
 
     async def setup_hook(self):
         LOG.info("Syncing application commands")
-        await self.tree.sync()
+        guild_id = os.environ.get("DISCORD_SYNC_GUILD_ID")
+        if guild_id:
+            guild = discord.Object(id=int(guild_id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            LOG.info("Synced commands to guild_id=%s", guild_id)
+        else:
+            await self.tree.sync()
 
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
@@ -510,6 +522,76 @@ class Bot(discord.Client):
             await interaction.followup.send("No enrolled prompt file was found for you.", ephemeral=True)
         LOG.info("Forget user_id=%s deleted=%s", user_id, changed)
 
+    async def _disguise(self, interaction: discord.Interaction, target: discord.Member) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self._is_admin(int(interaction.user.id)):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+
+        target_id = int(target.id)
+        caller_id = int(interaction.user.id)
+        if target_id == caller_id:
+            self._disguises.pop(caller_id, None)
+            await interaction.response.send_message("Disguise cleared. Using your own voice.", ephemeral=True)
+            return
+
+        if not self.tts.prompt_exists(target_id):
+            await interaction.response.send_message(
+                f"{target.mention} does not have an enrolled voice.",
+                ephemeral=True,
+            )
+            return
+
+        self._disguises[caller_id] = target_id
+        await interaction.response.send_message(
+            f"Disguise set. You will speak using {target.mention}'s voice.",
+            ephemeral=True,
+        )
+        LOG.info("Disguise set admin_id=%s target_id=%s", caller_id, target_id)
+
+    async def _add_admin(self, interaction: discord.Interaction, target: discord.Member) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if int(interaction.user.id) != 441597233150951425:
+            await interaction.response.send_message("Only txoka can add admins.", ephemeral=True)
+            return
+
+        target_id = int(target.id)
+        self._admins.add(target_id)
+        await interaction.response.send_message(f"Added admin: {target.mention}.", ephemeral=True)
+        LOG.info("Admin added by txoka target_id=%s", target_id)
+
+    async def _sync_commands(self, interaction: discord.Interaction) -> None:
+        if int(interaction.user.id) != 441597233150951425:
+            await interaction.response.send_message("Only txoka can sync commands.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id_env = os.environ.get("DISCORD_SYNC_GUILD_ID")
+        if guild_id_env:
+            guild = discord.Object(id=int(guild_id_env))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            await interaction.followup.send(f"Synced commands to guild_id={guild_id_env}.", ephemeral=True)
+            LOG.info("Manual sync to guild_id=%s by user_id=%s", guild_id_env, interaction.user.id)
+            return
+
+        if interaction.guild:
+            guild = discord.Object(id=int(interaction.guild.id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
+            LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
+            return
+
+        await self.tree.sync()
+        await interaction.followup.send("Synced commands globally.", ephemeral=True)
+        LOG.info("Manual global sync by user_id=%s", interaction.user.id)
+
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
             return
@@ -528,13 +610,22 @@ class Bot(discord.Client):
             )
             return
 
-        # Only speak if author has an enrolled prompt file
-        if not self.tts.prompt_exists(int(message.author.id)):
-            LOG.debug("Skip message no prompt guild_id=%s user_id=%s", message.guild.id, message.author.id)
+        # Resolve voice id (admin disguise)
+        author_id = int(message.author.id)
+        voice_id = self._disguises.get(author_id, author_id)
+
+        # Only speak if target voice has an enrolled prompt file
+        if not self.tts.prompt_exists(voice_id):
+            LOG.debug(
+                "Skip message no prompt guild_id=%s user_id=%s voice_id=%s",
+                message.guild.id,
+                author_id,
+                voice_id,
+            )
             return
 
         # If user is currently enrolling, don't queue TTS for them
-        if int(message.author.id) in self._cloning_users:
+        if author_id in self._cloning_users:
             LOG.debug("Skip message user cloning guild_id=%s user_id=%s", message.guild.id, message.author.id)
             return
 
@@ -544,14 +635,15 @@ class Bot(discord.Client):
             return
 
         # Enqueue TTS in the engine, then queue playback in-order for this guild
-        tts_future = await self.tts.enqueue(int(message.author.id), text)
+        tts_future = await self.tts.enqueue(voice_id, text)
         await st.queue.put(TTSJob(tts_future=tts_future))
         qsize = st.queue.qsize()
         if qsize and qsize % 10 == 0:
             LOG.info("Guild queue size=%d guild_id=%s", qsize, message.guild.id)
         LOG.debug(
-            "Enqueued message guild_id=%s user_id=%s chars=%d",
+            "Enqueued message guild_id=%s user_id=%s voice_id=%s chars=%d",
             message.guild.id,
             message.author.id,
+            voice_id,
             len(text),
         )

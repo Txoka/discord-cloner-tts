@@ -382,12 +382,13 @@ class Bot(discord.Client):
         lock = self._clone_lock.get(guild_id)
         if lock and lock.locked():
             target_channel_id = self._cloning_channels.get(guild_id)
-            if channel is not None and target_channel_id is not None and int(channel.id) != target_channel_id:
-                await interaction.response.send_message(
-                    "I'm currently cloning in another channel. Try again when cloning finishes.",
-                    ephemeral=True,
-                )
-                return
+            if target_channel_id is not None:
+                if channel is not None and int(channel.id) != target_channel_id:
+                    await interaction.response.send_message(
+                        "I'm currently cloning in another channel. Try again when cloning finishes.",
+                        ephemeral=True,
+                    )
+                    return
 
         if channel is None:
             member = interaction.user
@@ -397,6 +398,15 @@ class Bot(discord.Client):
             if not member or not member.voice or not member.voice.channel:
                 await interaction.response.send_message("You are not in a voice channel.", ephemeral=True)
                 return
+
+            if lock and lock.locked():
+                target_channel_id = self._cloning_channels.get(guild_id)
+                if target_channel_id is not None and int(member.voice.channel.id) != target_channel_id:
+                    await interaction.response.send_message(
+                        "I'm currently cloning in another channel. Try again when cloning finishes.",
+                        ephemeral=True,
+                    )
+                    return
 
             channel = member.voice.channel
 

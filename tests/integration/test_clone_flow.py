@@ -180,6 +180,26 @@ async def test_join_blocked_when_cloning_other_channel(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_join_blocked_when_cloning_other_channel_without_arg(monkeypatch):
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    vc = FakeVoiceClient()
+    member = FakeMember(5, FakeVoiceChannel(vc, channel_id=222))
+    guild = FakeGuild(1, member=member)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
+
+    lock = bot._clone_lock.setdefault(1, asyncio.Lock())
+    await lock.acquire()
+    try:
+        bot._cloning_channels[1] = 111
+        await bot._join(interaction, None)
+        assert interaction.response.messages
+        assert "cloning" in interaction.response.messages[-1].lower()
+        assert 1 not in bot.guild_state
+    finally:
+        lock.release()
+
+
+@pytest.mark.asyncio
 async def test_leave_blocked_when_cloning(monkeypatch):
     bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)

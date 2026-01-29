@@ -21,28 +21,26 @@ This project runs a Discord bot that reads messages from a selected text channel
 
 ## Data & State
 - Voice prompt files: `voices/<user_id>.pt`.
-- Planned admin database (SQLite): persistent storage for admin roles.
+- Admin database (SQLite): persistent storage for admin roles.
 - In-memory state:
   - Per-guild playback queues with ordered delivery.
-  - Global TTS request queue and worker(s).
+  - Fairness scheduler with per-guild request queues (round-robin).
 
 ## Message → Audio Pipeline (Current)
 1. Discord message received (`on_message`).
 2. Validate guild + channel + prompt presence + cloning status.
-3. Enqueue TTS request (global) → get a future for WAV bytes.
+3. Enqueue TTS request into per-guild scheduler (round-robin) → get a future for WAV bytes.
 4. Enqueue TTS future into per-guild playback queue.
 5. Playback worker consumes futures in order and plays audio.
 
-## Planned Updates
-- Replace global TTS queue with a fairness-aware scheduler that pulls requests in round-robin across guilds, while still batching across guilds.
-- Add queue limits (global + per-guild). If exceeded, react with :x:.
-- Introduce SQLite admin database with two roles: admin and superadmin.
-- Update bot commands to add/remove admins/superadmins.
-- Expand tests to cover new scheduling, limits, and DB behavior.
+## Behavior Notes
+- Scheduler batches across guilds while ensuring round-robin fairness (one per guild per cycle; fills remaining slots if fewer guilds).
+- Queue limits are enforced at ingest (global + per-guild); rejected messages get a ❌ reaction.
+- Admin roles are stored in SQLite with two levels: admin and superadmin (master superadmins from env).
 
 ## Config (Environment)
 - `DISCORD_TOKEN`: bot token.
 - `DISCORD_SUPERADMIN_ID`: comma-separated list of superadmin IDs (must include txoka).
+- `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
 - `QWEN_TTS_*`: model/runtime settings.
-- `QWEN_TTS_QUEUE_LIMIT_*`: queue limits (planned).
-
+- `QWEN_TTS_GLOBAL_QUEUE_LIMIT` / `QWEN_TTS_GUILD_QUEUE_LIMIT`: queue limits.

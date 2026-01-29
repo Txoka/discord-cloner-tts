@@ -87,6 +87,8 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Audio is synthesized in-memory (WAV bytes) and decoded to PCM for playback.
 - Model weights and cache are mounted to `./models` by docker-compose.
 - Admin roles are stored in a SQLite database under `./data`.
+- TTS scheduling is round-robin across guilds to keep fairness while batching.
+- Messages are rejected with a ❌ reaction when queue limits are exceeded.
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

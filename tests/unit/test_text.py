@@ -37,3 +37,15 @@ def test_unicode_emojis_to_speech_fallback(monkeypatch):
     monkeypatch.setattr(tts_text, "_emoji", None)
     out = tts_text.unicode_emojis_to_speech("hi 😀")
     assert "😀" not in out
+
+
+def test_preprocess_discord_text_emoji_only(monkeypatch):
+    class FakeEmoji:
+        @staticmethod
+        def demojize(text, language="en"):
+            return ":grinning_face:"
+
+    monkeypatch.setattr(tts_text, "_emoji", FakeEmoji)
+    msg = Msg(clean_content="😀")
+    out = tts_text.preprocess_discord_text(msg, max_chars=200)
+    assert "grinning face" in out

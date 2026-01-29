@@ -19,6 +19,11 @@ from tests.helpers.fakes import (
 )
 
 
+class FakePCMAudio:
+    def __init__(self, source):
+        self.source = source
+
+
 class FakeAdminStore:
     def is_admin(self, user_id: int) -> bool:
         return True
@@ -266,6 +271,8 @@ async def test_player_reconnects_after_disconnect(monkeypatch):
         vc.connected = True
 
     monkeypatch.setattr(bot, "_ensure_voice_connected", fake_ensure)
+    monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
+    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
     worker = asyncio.create_task(bot._player_worker(1))
 
     loop = asyncio.get_running_loop()
@@ -334,6 +341,10 @@ async def test_remove_debug_guild_clears_disguises(tmp_path):
         async def _send(self, content: str, ephemeral: bool = True):
             self.messages.append(content)
 
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    bot.tree.sync = fake_sync  # type: ignore[assignment]
     await bot._remove_debug_guild(FakeInteraction(), 1)
     assert 1 not in bot._disguises
 

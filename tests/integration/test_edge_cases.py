@@ -84,6 +84,7 @@ class FakeMember:
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_clone_rejects_second_attempt_same_guild(tmp_path, monkeypatch):
     tts = FakeTTS(tmp_path)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())

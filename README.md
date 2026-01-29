@@ -89,7 +89,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 ## Notes
 - The bot only speaks messages from users who have enrolled a voice.
 - Voice enrollment uses `discord-ext-voice-recv` to capture decoded PCM from Discord.
-- Audio is synthesized in-memory (WAV bytes) and decoded to PCM for playback.
+- Audio is synthesized in-memory (WAV bytes) and decoded to PCM for streaming playback.
 - Model weights and cache are mounted to `./models` by docker-compose.
 - Admin roles are stored in a SQLite database under `./data`.
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
@@ -111,6 +111,6 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.
-- `app/discord/` - Voice channel logic, recording, and playback queue.
+- `app/discord/` - Voice channel logic, recording, playback queue, and stream.
 - `app/tts/` - Text cleanup, audio processing, prompt handling, TTS engine.
 - `voices/` - Stored voice prompt files (mounted into the container).

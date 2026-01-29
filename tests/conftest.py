@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 import types
 from dataclasses import dataclass
 
 import torch
+import pytest
 
 
 def _ensure_module(name: str) -> types.ModuleType:
@@ -20,6 +22,20 @@ def _ensure_module(name: str) -> types.ModuleType:
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+warnings.filterwarnings(
+    "ignore",
+    message="builtin type SwigPyPacked has no __module__ attribute",
+    category=DeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message="builtin type SwigPyObject has no __module__ attribute",
+    category=DeprecationWarning,
+)
+
+import app.discord.bot as bot_mod
+from tests.helpers.fakes import FakeGuildPCMStream
 
 root = _ensure_module("vllm_omni")
 _ensure_module("vllm_omni.model_executor")
@@ -59,3 +75,9 @@ qwen_mod.VoiceClonePromptItem = VoiceClonePromptItem
 # Stub qwen_tts VoiceClonePromptItem if not installed.
 qwen_tts_mod = _ensure_module("qwen_tts")
 qwen_tts_mod.VoiceClonePromptItem = VoiceClonePromptItem
+
+
+@pytest.fixture(autouse=True)
+def _use_fake_guild_stream(monkeypatch):
+    monkeypatch.setattr(bot_mod, "GuildPCMStream", FakeGuildPCMStream)
+    yield

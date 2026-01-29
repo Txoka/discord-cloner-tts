@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 from dataclasses import dataclass
 from typing import Any
@@ -64,6 +65,42 @@ class FakeVoiceClient:
             after(None)
 
     def stop_listening(self) -> None:
+        return None
+
+
+class SpyVoiceClient(FakeVoiceClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.play_sources: list[Any] = []
+
+    def play(self, src: Any, after=None) -> None:
+        self.play_sources.append(src)
+        super().play(src, after=after)
+
+
+class FakeGuildPCMStream:
+    def __init__(self, guild_id: int):
+        self.guild_id = int(guild_id)
+        self.items: list[bytes] = []
+        self.closed = False
+
+    def is_opus(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self.closed = True
+
+    @property
+    def _closed(self) -> bool:
+        return self.closed
+
+    def enqueue(self, _job: Any, pcm_bytes: bytes, _loop: Any) -> Any:
+        self.items.append(pcm_bytes)
+        event = asyncio.Event()
+        event.set()
+        return event
+
+    def drain_for_tests(self, *_args: Any, **_kwargs: Any) -> None:
         return None
 
 

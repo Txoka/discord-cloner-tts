@@ -7,7 +7,7 @@ import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminRecord
 from app.discord.bot import Bot, GuildState, TTSJob
 from tests.helpers.asyncio_utils import cancel_task
-from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
+from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient, SpyVoiceClient
 
 
 class FakePCMAudio:
@@ -50,16 +50,67 @@ def test_single_user_pcm_collector_ignores_other_user():
     assert collector.mono_float32().size == 0
 
 
-@pytest.mark.asyncio
-async def test_player_worker_orders_playback(monkeypatch):
-    vc = FakeVoiceClient()
+def test_log_latency_breakdown(caplog):
     bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    loop = asyncio.new_event_loop()
+    try:
+        fut = loop.create_future()
+    finally:
+        loop.close()
+    job = TTSJob(
+        tts_future=fut,
+        trace={
+            "msg_recv_ts": 100.00,
+            "preprocess_done_ts": 100.05,
+            "enqueue_call_ts": 100.06,
+            "enqueue_return_ts": 100.07,
+            "tts_queue_enqueued_ts": 100.07,
+            "tts_queue_dequeued_ts": 100.27,
+            "tts_infer_start_ts": 100.27,
+            "tts_infer_end_ts": 100.77,
+            "tts_future_wait_start_ts": 100.20,
+            "tts_future_wait_end_ts": 100.80,
+            "guild_queue_put_ts": 100.08,
+            "guild_queue_get_ts": 101.08,
+            "vc_wait_start_ts": 101.08,
+            "vc_wait_end_ts": 101.28,
+            "pcm_prep_start_ts": 101.28,
+            "pcm_prep_end_ts": 101.38,
+            "playback_start_ts": 101.38,
+            "playback_end_ts": 102.38,
+        },
+        message_id=123,
+        author_id=456,
+        voice_id=789,
+    )
+
+    caplog.set_level("INFO")
+    bot._log_latency(1, job, "ok")
+
+    joined = "\n".join(rec.message for rec in caplog.records if "Latency stage=ok" in rec.message)
+    assert "Latency stage=ok guild_id=1 message_id=123 author_id=456 voice_id=789" in joined
+    assert "total_ms=2380.00" in joined
+    assert "preproc_ms=50.00" in joined
+    assert "enqueue_ms=10.00" in joined
+    assert "tts_queue_ms=200.00" in joined
+    assert "tts_wait_ms=600.00" in joined
+    assert "tts_infer_ms=500.00" in joined
+    assert "guild_queue_ms=1000.00" in joined
+    assert "vc_wait_ms=200.00" in joined
+    assert "pcm_ms=100.00" in joined
+    assert "playback_ms=1000.00" in joined
+
+
+@pytest.mark.asyncio
+async def test_player_starts_stream_after_enqueue(monkeypatch):
+    vc = SpyVoiceClient()
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
     async def fake_to_thread(func, *args, **kwargs):
         return func(*args, **kwargs)
 
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b"pcm:" + b, 48000, 2))
-    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
     q: asyncio.Queue[TTSJob] = asyncio.Queue()
     guild_id = 1
@@ -74,18 +125,16 @@ async def test_player_worker_orders_playback(monkeypatch):
     worker = asyncio.create_task(bot._player_worker(guild_id))
 
     loop = asyncio.get_running_loop()
-    fut1 = loop.create_future()
-    fut2 = loop.create_future()
-    await q.put(TTSJob(tts_future=fut1))
-    await q.put(TTSJob(tts_future=fut2))
-
-    fut1.set_result(b"one")
-    fut2.set_result(b"two")
+    fut = loop.create_future()
+    await q.put(TTSJob(tts_future=fut))
+    fut.set_result(b"one")
 
     await q.join()
     await cancel_task(worker)
 
-    assert vc.play_calls == [b"pcm:one", b"pcm:two"]
+    assert vc.play_sources
+    stream = vc.play_sources[0]
+    assert getattr(stream, "_closed", True) is False
 
 
 @pytest.mark.asyncio

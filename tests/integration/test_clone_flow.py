@@ -90,6 +90,7 @@ async def test_clone_creates_prompt_file(monkeypatch, tmp_path):
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
     bot.guild_state[1].worker_task.cancel()
+    await asyncio.sleep(0)
 
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
 
@@ -146,6 +147,7 @@ async def test_clone_keeps_prejoined_channel(monkeypatch, tmp_path):
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
     bot.guild_state[1].worker_task.cancel()
+    await asyncio.sleep(0)
     bot.guild_state[1].voice_channel_id = int(member.voice.channel.id)
 
     monkeypatch.setattr(bot_mod, "SingleUserPCMCollector", FakeCollector)

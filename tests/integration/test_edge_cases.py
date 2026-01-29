@@ -139,6 +139,7 @@ async def test_clone_allows_parallel_guilds(tmp_path, monkeypatch):
             st.worker_task.cancel()
         except Exception:
             pass
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -164,6 +165,7 @@ async def test_on_message_ignored_for_cloning_user(tmp_path):
     bot._cloning_users.add(user.id)
     await bot.on_message(msg)
     assert not tts.enqueued
+    await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -193,5 +195,6 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
 
     await q.join()
     worker.cancel()
+    await asyncio.sleep(0)
 
     assert vc.play_calls == []

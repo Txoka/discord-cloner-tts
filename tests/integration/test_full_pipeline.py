@@ -150,6 +150,7 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
             st.worker_task.cancel()
         if engine._worker_task:
             engine._worker_task.cancel()
+        await asyncio.sleep(0)
 
 
 @pytest.mark.asyncio
@@ -234,6 +235,7 @@ async def test_full_pipeline_rejects_when_queues_full(monkeypatch, tmp_path):
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
     bot.guild_state[1].worker_task.cancel()
+    await asyncio.sleep(0)
 
     loop = asyncio.get_running_loop()
     await q.put(TTSJob(tts_future=loop.create_future()))

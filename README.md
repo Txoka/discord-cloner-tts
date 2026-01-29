@@ -95,6 +95,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
 - Messages are rejected with a ❌ reaction when queue limits are exceeded.
 - Admin commands only exist in guilds listed in `DISCORD_DEBUG_GUILD_IDS` (and stored in the DB).
+- During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

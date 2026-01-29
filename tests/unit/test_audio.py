@@ -183,6 +183,7 @@ def test_trim_silence_energy_from_file():
     expected_end_ms = 14100.0
     tolerance_ms = 60.0
 
+    print(f"vad_start_ms={start_ms:.1f} vad_end_ms={end_ms:.1f}")
     assert abs(start_ms - expected_start_ms) <= tolerance_ms
     assert abs(end_ms - expected_end_ms) <= tolerance_ms
     assert trimmed.size == end_samp - start_samp

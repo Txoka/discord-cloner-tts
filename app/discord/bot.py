@@ -20,6 +20,7 @@ from app.config import (
     CLONE_MIN_SECONDS,
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
+    DISCORD_ADMIN_ENABLED,
     GUILD_QUEUE_LIMIT,
     GLOBAL_QUEUE_LIMIT,
 )
@@ -123,17 +124,24 @@ class Bot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.tts = tts
         self.admin_store = admin_store
+        self.admin_enabled = bool(DISCORD_ADMIN_ENABLED)
         self.guild_state: Dict[int, GuildState] = {}
 
         # Prevent concurrent enrollments per guild + suppress TTS for enrolling user
         self._clone_lock: Dict[int, asyncio.Lock] = {}
         self._cloning_users: set[int] = set()
         self._disguises: Dict[int, int] = {}
+        if not self.admin_enabled:
+            self._disguises.clear()
 
     def _is_admin(self, user_id: int) -> bool:
+        if not self.admin_enabled:
+            return False
         return self.admin_store.is_admin(int(user_id))
 
     def _is_superadmin(self, user_id: int) -> bool:
+        if not self.admin_enabled:
+            return False
         return self.admin_store.is_superadmin(int(user_id))
 
     async def setup_hook(self):
@@ -532,6 +540,9 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
+        if not self.admin_enabled:
+            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+            return
         if not self._is_admin(int(interaction.user.id)):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
@@ -561,6 +572,9 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
+        if not self.admin_enabled:
+            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+            return
         if not self._is_superadmin(int(interaction.user.id)):
             await interaction.response.send_message("Superadmins only.", ephemeral=True)
             return
@@ -578,6 +592,9 @@ class Bot(discord.Client):
     async def _remove_admin(self, interaction: discord.Interaction, target: discord.Member) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self.admin_enabled:
+            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
             return
         if not self._is_superadmin(int(interaction.user.id)):
             await interaction.response.send_message("Superadmins only.", ephemeral=True)

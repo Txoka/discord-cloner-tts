@@ -18,6 +18,8 @@ def test_admin_store_bootstrap_and_roles(tmp_path):
 
     store.upsert_admin(2, "superadmin")
     assert store.is_superadmin(2)
+    assert store.has_role(2, "admin") is True
+    assert store.has_role(2, "admin") is True
 
 
 def test_admin_store_remove(tmp_path):
@@ -32,3 +34,25 @@ def test_admin_store_remove(tmp_path):
 
     # master superadmin should not be removable
     assert store.remove_admin(1) is False
+
+
+def test_admin_store_migrates_legacy_table(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[])
+    store.init_schema()
+    with store._connect() as conn:
+        conn.execute("INSERT INTO admins (user_id, role) VALUES (?, ?)", (7, "admin"))
+        conn.commit()
+    store.init_schema()
+    assert store.has_role(7, "admin")
+
+
+def test_admin_store_migrates_legacy_table(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[])
+    store.init_schema()
+    with store._connect() as conn:
+        conn.execute("INSERT INTO admins (user_id, role) VALUES (?, ?)", (7, "admin"))
+        conn.commit()
+    store.init_schema()
+    assert store.has_role(7, "admin")

@@ -20,6 +20,9 @@ class FakeAdminStore:
     def is_superadmin(self, user_id: int) -> bool:
         return True
 
+    def has_role(self, user_id: int, role: str) -> bool:
+        return True
+
 
 def test_single_user_pcm_collector_ignores_other_user():
     collector = bot_mod.SingleUserPCMCollector(target_user_id=1)
@@ -85,6 +88,7 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
             return fut
 
     tts = FakeTTS()
+    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -126,6 +130,7 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
     monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 1)
 
     tts = FakeTTS()
+    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -150,3 +155,40 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
 
     assert not tts.enqueued
     assert "❌" in msg.reactions
+
+
+@pytest.mark.asyncio
+async def test_admin_disabled_ignores_disguise(monkeypatch):
+    class FakeTTS:
+        def prompt_exists(self, user_id: int) -> bool:
+            return True
+
+        async def enqueue(self, guild_id: int, user_id: int, text: str):
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            fut.set_result(b"wav")
+            self.last = (guild_id, user_id, text)
+            return fut
+
+    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", False)
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    bot._disguises[5] = 99
+
+    guild = FakeGuild(1)
+    channel = FakeChannel(10)
+    user = FakeUser(5)
+    msg = FakeMessage(guild=guild, channel=channel, author=user, clean_content="hi")
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    await bot.on_message(msg)
+    assert tts.last[1] == 5

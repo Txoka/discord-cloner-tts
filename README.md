@@ -50,6 +50,7 @@ Environment variables (set in `.env`):
 ```env
 # Required
 DISCORD_TOKEN=...
+DISCORD_ADMIN_ENABLED=1
 DISCORD_SUPERADMIN_ID=441597233150951425   # Comma-separated IDs
 
 # Model and runtime
@@ -89,6 +90,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Admin roles are stored in a SQLite database under `./data`.
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
 - Messages are rejected with a ❌ reaction when queue limits are exceeded.
+- Set `DISCORD_ADMIN_ENABLED=0` to disable all admin commands and disguises.
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

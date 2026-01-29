@@ -7,7 +7,16 @@ import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminRecord
 from app.discord.bot import Bot, GuildState, TTSJob
 from tests.helpers.asyncio_utils import cancel_task
-from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient, SpyVoiceClient
+from tests.helpers.fakes import (
+    FakeChannel,
+    FakeGuild,
+    FakeInteraction,
+    FakeMessage,
+    FakeUser,
+    FakeVoiceChannel,
+    FakeVoiceClient,
+    SpyVoiceClient,
+)
 
 
 class FakePCMAudio:
@@ -99,6 +108,58 @@ def test_log_latency_breakdown(caplog):
     assert "vc_wait_ms=200.00" in joined
     assert "pcm_ms=100.00" in joined
     assert "playback_ms=1000.00" in joined
+
+
+@pytest.mark.asyncio
+async def test_join_refuses_empty_channel():
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    guild = FakeGuild(1)
+    user = FakeUser(5)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=user, guild=guild)
+    empty_channel = FakeVoiceChannel(FakeVoiceClient(), channel_id=123, members=[])
+
+    await bot._join(interaction, empty_channel)
+    assert interaction.response.messages
+    assert "empty voice channel" in interaction.response.messages[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_auto_leave_triggers_when_alone(monkeypatch):
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    monkeypatch.setattr(bot_mod, "AUTO_LEAVE_SECONDS", 0.01)
+
+    vc = FakeVoiceClient()
+    class DummyVoiceChannel:
+        def __init__(self) -> None:
+            self.id = 1
+            self.name = "voice"
+            self.members = []
+
+    monkeypatch.setattr(bot_mod.discord, "VoiceChannel", DummyVoiceChannel)
+    channel = DummyVoiceChannel()
+    guild = FakeGuild(1, channel=channel)
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=vc,
+        voice_channel_id=1,
+        text_channel_id=1,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[1].worker_task)
+
+    bot.get_guild = lambda _gid: guild  # type: ignore[assignment]
+
+    left = asyncio.Event()
+
+    async def fake_leave(guild_id: int, reason: str) -> None:
+        left.set()
+
+    bot._leave_guild = fake_leave  # type: ignore[assignment]
+
+    bot._schedule_auto_leave(1)
+    await asyncio.wait_for(left.wait(), timeout=0.2)
 
 
 @pytest.mark.asyncio

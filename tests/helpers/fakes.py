@@ -19,13 +19,19 @@ class FakeChannel:
 
 
 class FakeGuild:
-    def __init__(self, guild_id: int, member: Any | None = None) -> None:
+    def __init__(self, guild_id: int, member: Any | None = None, channel: Any | None = None) -> None:
         self.id = int(guild_id)
         self.voice_client = None
         self._member = member
+        self._channel = channel
 
     def get_member(self, member_id: int):
         return self._member
+
+    def get_channel(self, channel_id: int):
+        if self._channel and int(getattr(self._channel, "id", -1)) == int(channel_id):
+            return self._channel
+        return None
 
 
 class FakeVoiceClient:
@@ -105,10 +111,11 @@ class FakeGuildPCMStream:
 
 
 class FakeVoiceChannel:
-    def __init__(self, voice_client: FakeVoiceClient, channel_id: int = 1):
+    def __init__(self, voice_client: FakeVoiceClient, channel_id: int = 1, members: list[Any] | None = None):
         self._voice_client = voice_client
         self.name = "voice"
         self.id = int(channel_id)
+        self.members = list(members) if members is not None else []
 
     async def connect(self, cls=None):
         return self._voice_client

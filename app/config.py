@@ -44,6 +44,9 @@ GUILD_QUEUE_LIMIT = int(os.environ.get("QWEN_TTS_GUILD_QUEUE_LIMIT", "10"))
 CLONE_RECORD_SECONDS = int(os.environ.get("QWEN_TTS_CLONE_SECONDS", "20"))
 CLONE_MIN_SECONDS = float(os.environ.get("QWEN_TTS_CLONE_MIN_SECONDS", "3.0"))
 
+# Auto-leave when the bot is alone in voice
+AUTO_LEAVE_SECONDS = int(os.environ.get("QWEN_TTS_AUTO_LEAVE_SECONDS", "300"))
+
 # Spanish-heavy sample (covers rr, ll, ñ, j, z/ce/ci, numbers, punctuation, etc.)
 CLONE_SAMPLE_TEXT_ES = os.environ.get(
     "QWEN_TTS_CLONE_TEXT",

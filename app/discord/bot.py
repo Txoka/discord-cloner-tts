@@ -17,6 +17,7 @@ from discord import app_commands
 from discord.ext import voice_recv  # pip install discord-ext-voice-recv
 
 from app.config import (
+    AUTO_LEAVE_SECONDS,
     CLONE_MIN_SECONDS,
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
@@ -227,6 +228,7 @@ class Bot(discord.Client):
         self._disguises: Dict[int, Dict[int, int]] = {}
         self._admin_commands: list[app_commands.Command] = []
         self._global_queue_size = 0
+        self._auto_leave_tasks: Dict[int, asyncio.Task] = {}
         self._register_admin_command_objects()
 
     def _register_admin_command_objects(self) -> None:
@@ -598,6 +600,13 @@ class Bot(discord.Client):
 
             channel = member.voice.channel
 
+        if not self._channel_has_humans(channel):
+            await interaction.response.send_message(
+                "Refusing to join an empty voice channel. Ask someone to join first.",
+                ephemeral=True,
+            )
+            return
+
         vc = interaction.guild.voice_client
         if vc and vc.is_connected():
             await vc.move_to(channel)
@@ -628,6 +637,7 @@ class Bot(discord.Client):
             ephemeral=True,
         )
         LOG.info("Joined voice guild_id=%s channel_id=%s", interaction.guild_id, channel.id)
+        self._cancel_auto_leave(guild_id)
 
     async def _leave(self, interaction: discord.Interaction) -> None:
         if not interaction.guild:
@@ -643,13 +653,7 @@ class Bot(discord.Client):
             await interaction.response.send_message("I'm not connected.", ephemeral=True)
             return
 
-        await self._cancel_task(st.worker_task, name="leave-worker")
-        drained = self._drain_queue(st.queue)
-        self._decrement_global_queue(drained)
-        if st.stream:
-            st.stream.close()
-        await st.voice_client.disconnect(force=True)
-        self.guild_state.pop(int(interaction.guild_id), None)
+        await self._leave_guild(guild_id, reason="leave")
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
         LOG.info("Left voice guild_id=%s", interaction.guild_id)
 
@@ -841,13 +845,7 @@ class Bot(discord.Client):
                 if not preexisting_connected and not self._clone_joined.get(guild_id, False):
                     st = self.guild_state.get(guild_id)
                     if st:
-                        await self._cancel_task(st.worker_task, name="clone-cleanup-worker")
-                        drained = self._drain_queue(st.queue)
-                        self._decrement_global_queue(drained)
-                        if st.stream:
-                            st.stream.close()
-                        await st.voice_client.disconnect(force=True)
-                        self.guild_state.pop(guild_id, None)
+                        await self._leave_guild(guild_id, reason="clone-cleanup")
                         LOG.info("Left voice after clone guild_id=%s", interaction.guild_id)
                 LOG.info("Clone finished guild_id=%s user_id=%s", interaction.guild_id, member.id)
 
@@ -1133,3 +1131,86 @@ class Bot(discord.Client):
             voice_id,
             len(text),
         )
+
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState | None,
+        after: discord.VoiceState | None,
+    ) -> None:
+        if not member.guild:
+            return
+        guild_id = int(member.guild.id)
+        st = self.guild_state.get(guild_id)
+        if not st:
+            return
+        if not st.voice_client or not st.voice_client.is_connected():
+            self._cancel_auto_leave(guild_id)
+            return
+        channel = member.guild.get_channel(int(st.voice_channel_id))
+        if not isinstance(channel, discord.VoiceChannel):
+            self._cancel_auto_leave(guild_id)
+            return
+        if self._channel_has_humans(channel):
+            self._cancel_auto_leave(guild_id)
+            return
+        self._schedule_auto_leave(guild_id)
+
+    def _channel_has_humans(self, channel: discord.VoiceChannel) -> bool:
+        members = getattr(channel, "members", [])
+        return any(not getattr(m, "bot", False) for m in members)
+
+    def _schedule_auto_leave(self, guild_id: int) -> None:
+        if AUTO_LEAVE_SECONDS <= 0:
+            return
+        existing = self._auto_leave_tasks.get(guild_id)
+        if existing and not existing.done():
+            return
+
+        async def _auto_leave_task() -> None:
+            try:
+                await asyncio.sleep(float(AUTO_LEAVE_SECONDS))
+                st = self.guild_state.get(guild_id)
+                if not st or not st.voice_client or not st.voice_client.is_connected():
+                    return
+                guild = self.get_guild(guild_id)
+                if not guild:
+                    return
+                channel = guild.get_channel(int(st.voice_channel_id))
+                if not isinstance(channel, discord.VoiceChannel):
+                    return
+                if self._channel_has_humans(channel):
+                    return
+                await self._leave_guild(guild_id, reason="auto-leave")
+            except asyncio.CancelledError:
+                return
+            finally:
+                task = self._auto_leave_tasks.get(guild_id)
+                if task and task.done():
+                    self._auto_leave_tasks.pop(guild_id, None)
+
+        self._auto_leave_tasks[guild_id] = asyncio.create_task(_auto_leave_task())
+        LOG.info("Auto-leave scheduled guild_id=%s seconds=%s", guild_id, AUTO_LEAVE_SECONDS)
+
+    def _cancel_auto_leave(self, guild_id: int) -> None:
+        task = self._auto_leave_tasks.pop(guild_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _leave_guild(self, guild_id: int, reason: str) -> None:
+        st = self.guild_state.get(guild_id)
+        if not st:
+            return
+        self._cancel_auto_leave(guild_id)
+        await self._cancel_task(st.worker_task, name=f"{reason}-worker")
+        drained = self._drain_queue(st.queue)
+        self._decrement_global_queue(drained)
+        if st.stream:
+            st.stream.close()
+        try:
+            await st.voice_client.disconnect(force=True)
+        except Exception as exc:
+            LOG.warning("Disconnect failed guild_id=%s err=%s", guild_id, exc)
+        self.guild_state.pop(guild_id, None)
+        self._clone_joined.pop(guild_id, None)
+        LOG.info("Left voice guild_id=%s reason=%s", guild_id, reason)

@@ -40,12 +40,22 @@ make logs
 - `/setchannel #channel` - Choose which text channel to read aloud.
 - `/clone` - Record a 20s Spanish sample to enroll your voice.
 - `/forget` - Delete your enrolled voice prompt file.
+- `/disguise @user` - Admins only: speak using someone else's voice.
+- `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
+- `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
+- `/adminlist` - Admins only: list all admins and their roles.
+- `/adddebugguild <guild_id>` - Admins only: enable admin commands for a guild.
+- `/removedebugguild <guild_id>` - Admins only: disable admin commands for a guild.
+- `/debugguildlist` - Admins only: list guilds with admin commands enabled.
+- `/sync` - Admins only: sync slash commands to the current guild.
 
 ## Configuration
 Environment variables (set in `.env`):
 ```env
 # Required
 DISCORD_TOKEN=...
+DISCORD_SUPERADMIN_IDS=441597233150951425   # Comma-separated IDs
+DISCORD_DEBUG_GUILD_IDS=                   # Comma-separated guild IDs
 
 # Model and runtime
 QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-Base
@@ -63,6 +73,8 @@ QWEN_TTS_MAX_GAIN_DB=12
 
 # Text handling
 QWEN_TTS_MAX_CHARS=1024
+QWEN_TTS_GLOBAL_QUEUE_LIMIT=200
+QWEN_TTS_GUILD_QUEUE_LIMIT=50
 
 # Voice-clone capture
 QWEN_TTS_CLONE_SECONDS=20
@@ -71,13 +83,19 @@ QWEN_TTS_CLONE_TEXT=...         # Optional custom sample text
 
 # Storage
 VOICES_DIR=/app/voices
+DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 ```
 
 ## Notes
 - The bot only speaks messages from users who have enrolled a voice.
 - Voice enrollment uses `discord-ext-voice-recv` to capture decoded PCM from Discord.
-- Temporary WAV files are generated per message and deleted after playback.
+- Audio is synthesized in-memory (WAV bytes) and decoded to PCM for playback.
 - Model weights and cache are mounted to `./models` by docker-compose.
+- Admin roles are stored in a SQLite database under `./data`.
+- TTS scheduling is round-robin across guilds to keep fairness while batching.
+- Messages are rejected with a ❌ reaction when queue limits are exceeded.
+- Admin commands only exist in guilds listed in `DISCORD_DEBUG_GUILD_IDS` (and stored in the DB).
+- During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

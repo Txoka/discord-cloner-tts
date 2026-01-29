@@ -25,14 +25,27 @@
 - No formatter or linter is configured—keep changes minimal and consistent.
 
 ## Testing Guidelines
-- No automated test suite is present.
-- If adding tests, keep them under a new `tests/` directory and document how to run them.
+- Automated tests are present under `tests/`.
+- Use `make test` to run the suite via Docker Compose.
+- Update or add tests for any functional change, and run the test suite before merging into `dev`.
 
 ## Commit & Pull Request Guidelines
-- This directory does not include Git history, so no commit conventions are available.
+- This repository uses Git with a `main` branch.
+- Make incremental commits while working; avoid large monolithic commits.
+- Create a feature branch before significant changes and merge it into `dev`.
+- Only the repository owner merges `dev` into `main`.
+- If merge conflicts arise, resolve them unless they involve user-owned changes; when uncertain, ask first.
 - Use clear, imperative commit messages (e.g., “Add voice normalization options”).
 - PRs should describe behavior changes, configuration updates, and any new dependencies.
 - Include usage notes if new environment variables are introduced.
+
+## Documentation & Planning
+- Read and keep `ARCHITECTURE.md` current when behavior or structure changes.
+- Use `TODO.md` to track active work and update it as tasks are completed.
+- Update user-facing docs (e.g., `README.md`) whenever behavior or configuration changes.
+
+## Clarifications
+- If any requirement is ambiguous or uncertain, ask for clarification before coding or making assumptions.
 
 ## Security & Configuration Tips
 - Store secrets in `.env` (e.g., `DISCORD_TOKEN`) and avoid committing real tokens.

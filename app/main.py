@@ -6,7 +6,19 @@ import os
 
 import discord
 
-from app.config import DEVICE, DTYPE, LOG_LEVEL, MAX_BATCH_SIZE, MODEL_ID, NORM_MODE, VOICES_DIR
+from app.config import (
+    ADMIN_DB_PATH,
+    DEVICE,
+    DTYPE,
+    LOG_LEVEL,
+    MAX_BATCH_SIZE,
+    MODEL_ID,
+    NORM_MODE,
+    DEBUG_GUILD_IDS,
+    SUPERADMIN_IDS,
+    VOICES_DIR,
+)
+from app.discord.admin_store import AdminStore
 from app.discord.bot import Bot
 from app.tts.engine import TTSEngine
 
@@ -26,6 +38,10 @@ def main() -> None:
 
     tts = TTSEngine(VOICES_DIR)
     tts.load_model()
+    admin_store = AdminStore(ADMIN_DB_PATH, SUPERADMIN_IDS, DEBUG_GUILD_IDS)
+    admin_store.init_schema()
+    admin_store.bootstrap_superadmins()
+    admin_store.bootstrap_debug_guilds()
     log.info(
         "Startup model=%s device=%s dtype=%s max_batch=%s norm_mode=%s voices_dir=%s",
         MODEL_ID,
@@ -36,7 +52,7 @@ def main() -> None:
         VOICES_DIR,
     )
 
-    bot = Bot(tts)
+    bot = Bot(tts, admin_store)
 
     @bot.tree.command(name="join", description="Join your current voice channel, or a specified one.")
     @discord.app_commands.describe(channel="Optional voice channel to join")
@@ -59,20 +75,6 @@ def main() -> None:
     @bot.tree.command(name="forget", description="Forget your enrolled voice (delete prompt file).")
     async def forget(interaction: discord.Interaction):
         await bot._forget(interaction)
-
-    @bot.tree.command(name="disguise", description="Admins only: speak using someone else's voice.")
-    @discord.app_commands.describe(target="User whose voice you want to use")
-    async def disguise(interaction: discord.Interaction, target: discord.Member):
-        await bot._disguise(interaction, target)
-
-    @bot.tree.command(name="addadmin", description="Admins only: add another admin (txoka only).")
-    @discord.app_commands.describe(target="User to grant admin access")
-    async def addadmin(interaction: discord.Interaction, target: discord.Member):
-        await bot._add_admin(interaction, target)
-
-    @bot.tree.command(name="sync", description="Owner only: sync slash commands.")
-    async def sync(interaction: discord.Interaction):
-        await bot._sync_commands(interaction)
 
     bot.run(token)
 

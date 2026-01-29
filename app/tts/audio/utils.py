@@ -138,8 +138,10 @@ def trim_silence_energy(
     hop_ms: int = 10,
     noise_percentile: float = 10.0,
     snr_db: float = 10.0,
+    floor_db: float = -45.0,
     pad_ms: int = 150,
     min_keep_ms: int = 300,
+    min_voiced_ms: int = 60,
 ) -> np.ndarray:
     """Energy-based VAD trim.
 
@@ -148,8 +150,38 @@ def trim_silence_energy(
 
     Returns possibly-trimmed audio. If no voiced region is detected, returns original x.
     """
-    if x.size == 0:
+    start_samp, end_samp = compute_trim_bounds(
+        x,
+        sr,
+        frame_ms=frame_ms,
+        hop_ms=hop_ms,
+        noise_percentile=noise_percentile,
+        snr_db=snr_db,
+        floor_db=floor_db,
+        pad_ms=pad_ms,
+        min_keep_ms=min_keep_ms,
+        min_voiced_ms=min_voiced_ms,
+    )
+    if start_samp == 0 and end_samp == x.size:
         return x
+    return x[start_samp:end_samp]
+
+
+def compute_trim_bounds(
+    x: np.ndarray,
+    sr: int,
+    frame_ms: int = 30,
+    hop_ms: int = 10,
+    noise_percentile: float = 10.0,
+    snr_db: float = 10.0,
+    floor_db: float = -45.0,
+    pad_ms: int = 150,
+    min_keep_ms: int = 300,
+    min_voiced_ms: int = 60,
+) -> tuple[int, int]:
+    """Return (start, end) indices for VAD-based trimming."""
+    if x.size == 0:
+        return 0, x.size
 
     x = x.astype(np.float32, copy=False)
     frame = max(1, int(sr * frame_ms / 1000))
@@ -158,12 +190,12 @@ def trim_silence_energy(
     min_keep = int(sr * min_keep_ms / 1000)
 
     if x.size < frame:
-        return x
+        return 0, x.size
 
     # Compute frame RMS dB
     starts = np.arange(0, x.size - frame + 1, hop, dtype=np.int64)
     if starts.size == 0:
-        return x
+        return 0, x.size
 
     # Vectorized framing via striding is possible but keep it simple and robust.
     rms = np.empty((starts.size,), dtype=np.float32)
@@ -174,15 +206,40 @@ def trim_silence_energy(
 
     db = 20.0 * np.log10(np.maximum(rms, eps))
 
-    noise_db = float(np.percentile(db, noise_percentile))
-    thr_db = noise_db + float(snr_db)
+    def find_voiced_bounds(mask: np.ndarray) -> tuple[int, int] | None:
+        min_frames = max(1, int(round(min_voiced_ms / max(hop_ms, 1))))
+        if mask.size < min_frames:
+            return None
+        if min_frames == 1:
+            first_idx = int(np.argmax(mask))
+            if not mask[first_idx]:
+                return None
+            last_idx = int(len(mask) - 1 - np.argmax(mask[::-1]))
+            return first_idx, last_idx
 
-    voiced = db >= thr_db
+        window = np.ones((min_frames,), dtype=np.int32)
+        hits = np.convolve(mask.astype(np.int32), window, mode="valid")
+        idx = np.flatnonzero(hits >= min_frames)
+        if idx.size == 0:
+            return None
+        first_idx = int(idx[0])
+        last_idx = int(idx[-1] + min_frames - 1)
+        return first_idx, last_idx
+
+    db_median = float(np.median(db))
+    mad = float(np.median(np.abs(db - db_median)))
+    if mad <= 1e-6:
+        mad = 1e-6
+    thr_db = db_median + 3.0 * mad
+
+    voiced = db >= max(thr_db, floor_db)
     if not np.any(voiced):
-        return x
+        return 0, x.size
 
-    first = int(np.argmax(voiced))
-    last = int(len(voiced) - 1 - np.argmax(voiced[::-1]))
+    bounds = find_voiced_bounds(voiced)
+    if bounds is None:
+        return 0, x.size
+    first, last = bounds
 
     start_samp = int(starts[first])
     end_samp = int(starts[last] + frame)
@@ -192,6 +249,6 @@ def trim_silence_energy(
     end_samp = min(x.size, end_samp + pad)
 
     if end_samp - start_samp < min_keep:
-        return x
+        return 0, x.size
 
-    return x[start_samp:end_samp]
+    return start_samp, end_samp

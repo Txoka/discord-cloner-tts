@@ -33,6 +33,7 @@ class FakeVoiceClient:
         self.connected = True
         self.play_calls: list[bytes] = []
         self._sink = None
+        self._playing = False
 
     def is_connected(self) -> bool:
         return self.connected
@@ -48,8 +49,15 @@ class FakeVoiceClient:
         if hasattr(src, "source") and isinstance(src.source, io.BytesIO):
             data = src.source.getvalue()
         self.play_calls.append(data)
+        self._playing = True
         if after:
             after(None)
+
+    def is_playing(self) -> bool:
+        return self._playing
+
+    def stop(self) -> None:
+        self._playing = False
 
     def listen(self, sink: Any, after=None) -> None:
         self._sink = sink
@@ -61,9 +69,10 @@ class FakeVoiceClient:
 
 
 class FakeVoiceChannel:
-    def __init__(self, voice_client: FakeVoiceClient):
+    def __init__(self, voice_client: FakeVoiceClient, channel_id: int = 1):
         self._voice_client = voice_client
         self.name = "voice"
+        self.id = int(channel_id)
 
     async def connect(self, cls=None):
         return self._voice_client
@@ -105,3 +114,13 @@ class FakeMessage:
     channel: Any
     author: Any
     clean_content: str
+
+    def __init__(self, guild: Any, channel: Any, author: Any, clean_content: str) -> None:
+        self.guild = guild
+        self.channel = channel
+        self.author = author
+        self.clean_content = clean_content
+        self.reactions: list[str] = []
+
+    async def add_reaction(self, emoji: str) -> None:
+        self.reactions.append(emoji)

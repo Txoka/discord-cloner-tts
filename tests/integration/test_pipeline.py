@@ -6,12 +6,33 @@ import pytest
 import app.discord.bot as bot_mod
 from app.discord.bot import Bot, GuildState
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
 class FakePCMAudio:
     def __init__(self, source):
         self.source = source
+
+
+class FakeAdminStore:
+    def is_admin(self, user_id: int) -> bool:
+        return True
+
+    def is_superadmin(self, user_id: int) -> bool:
+        return True
+
+    def list_debug_guilds(self):
+        return [1, 2]
+
+    def list_admins(self):
+        return []
+
+    def add_debug_guild(self, guild_id: int) -> None:
+        return None
+
+    def remove_debug_guild(self, guild_id: int) -> bool:
+        return True
 
 
 @pytest.mark.asyncio
@@ -32,7 +53,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
 
     engine._process_batch = fake_process  # type: ignore[assignment]
 
-    bot = Bot(tts=engine)
+    bot = Bot(tts=engine, admin_store=FakeAdminStore())
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
     monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
@@ -41,6 +62,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
         q: asyncio.Queue = asyncio.Queue()
         bot.guild_state[gid] = GuildState(
             voice_client=vc,
+            voice_channel_id=gid,
             text_channel_id=100 + gid,
             queue=q,
             worker_task=asyncio.create_task(bot._player_worker(gid)),
@@ -75,7 +97,9 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
     assert bot.guild_state[1].voice_client.play_calls == [b"10:hello", b"10:again"]
     assert bot.guild_state[2].voice_client.play_calls == [b"20:world"]
 
+    tasks = []
     for st in bot.guild_state.values():
-        st.worker_task.cancel()
-    if engine._worker_task:
-        engine._worker_task.cancel()
+        tasks.append(cancel_task(st.worker_task))
+    tasks.append(cancel_task(engine._worker_task))
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)

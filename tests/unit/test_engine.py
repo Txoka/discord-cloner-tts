@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 
 
 @dataclass
@@ -110,11 +111,10 @@ async def test_queue_worker_resolves_future(monkeypatch, tmp_path):
         return [(r, b"wav", None) for r in batch]
 
     engine._process_batch = fake_process  # type: ignore[assignment]
-    fut = await engine.enqueue(1, "hi")
+    fut = await engine.enqueue(1, 1, "hi")
     out = await asyncio.wait_for(fut, 1)
     assert out == b"wav"
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)
 
 
 @pytest.mark.asyncio
@@ -130,9 +130,40 @@ async def test_queue_worker_skips_cancelled(monkeypatch, tmp_path):
         return [(r, b"wav", None) for r in batch]
 
     engine._process_batch = fake_process  # type: ignore[assignment]
-    fut = await engine.enqueue(1, "hi")
+    fut = await engine.enqueue(1, 1, "hi")
     fut.cancel()
     await asyncio.sleep(0)
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)
     assert fut.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_queue_worker_round_robin(monkeypatch, tmp_path):
+    engine = TTSEngine(tmp_path)
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr("app.tts.engine.MAX_BATCH_SIZE", 3)
+
+    captured: list[list[tuple[int, str]]] = []
+
+    def fake_process(batch):
+        captured.append([(r.guild_id, r.text) for r in batch])
+        return [(r, b"wav", None) for r in batch]
+
+    engine._process_batch = fake_process  # type: ignore[assignment]
+
+    futs = [
+        await engine.enqueue(1, 10, "g1-a"),
+        await engine.enqueue(1, 10, "g1-b"),
+        await engine.enqueue(2, 20, "g2-a"),
+    ]
+
+    for fut in futs:
+        await asyncio.wait_for(fut, 1)
+
+    assert captured
+    assert captured[0] == [(1, "g1-a"), (2, "g2-a"), (1, "g1-b")]
+    await cancel_task(engine._worker_task)

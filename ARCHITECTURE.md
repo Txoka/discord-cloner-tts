@@ -1,0 +1,49 @@
+# Architecture
+
+## Overview
+This project runs a Discord bot that reads messages from a selected text channel, synthesizes speech with Qwen3-TTS via vLLM-Omni, and plays audio in a guild voice channel. Each user must enroll a voice sample which is stored on disk and reused for future synthesis.
+
+## Core Components
+- `app/main.py`
+  - Process entry point. Loads config, initializes `TTSEngine`, wires Discord slash commands.
+- `app/discord/bot.py`
+  - Discord client implementation.
+  - Manages per-guild voice connections and playback queues.
+  - Handles enrollment (`/clone`), per-message routing, and admin actions.
+- `app/tts/engine.py`
+  - TTS queue manager and model wrapper.
+  - Loads and caches prompt items for each user.
+  - Performs batching of synthesis requests.
+- `app/tts/text.py`
+  - Sanitizes and normalizes Discord message text for TTS.
+- `app/tts/audio/utils.py`
+  - Audio normalization, trimming, resampling, and PCM conversion.
+
+## Data & State
+- Voice prompt files: `voices/<user_id>.pt`.
+- Admin database (SQLite): persistent storage for admin roles.
+- In-memory state:
+  - Per-guild playback queues with ordered delivery.
+  - Fairness scheduler with per-guild request queues (round-robin).
+
+## Message → Audio Pipeline (Current)
+1. Discord message received (`on_message`).
+2. Validate guild + channel + prompt presence + cloning status.
+3. Enqueue TTS request into per-guild scheduler (round-robin) → get a future for WAV bytes.
+4. Enqueue TTS future into per-guild playback queue.
+5. Playback worker consumes futures in order and plays audio.
+
+## Behavior Notes
+- Scheduler batches across guilds while ensuring round-robin fairness (one per guild per cycle; fills remaining slots if fewer guilds).
+- Queue limits are enforced at ingest (global + per-guild); rejected messages get a ❌ reaction.
+- Admin roles are stored in SQLite with two levels: admin and superadmin (master superadmins from env).
+- Admin commands are only registered in debug guilds; other guilds have no admin behavior.
+- While cloning, `/leave` is blocked and `/join` is restricted to the cloning channel; the bot disconnects after clone unless already joined (or joined during cloning).
+
+## Config (Environment)
+- `DISCORD_TOKEN`: bot token.
+- `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs.
+- `DISCORD_DEBUG_GUILD_IDS`: comma-separated list of guild IDs that get admin commands.
+- `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
+- `QWEN_TTS_*`: model/runtime settings.
+- `QWEN_TTS_GLOBAL_QUEUE_LIMIT` / `QWEN_TTS_GUILD_QUEUE_LIMIT`: queue limits.

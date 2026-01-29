@@ -11,6 +11,7 @@ services:
     volumes:
       - ./voices:/app/voices
       - ./models:/app/models
+      - ./data:/app/data
     runtime: nvidia
     environment:
       NVIDIA_VISIBLE_DEVICES: all

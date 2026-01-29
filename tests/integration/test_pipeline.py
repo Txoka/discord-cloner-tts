@@ -96,7 +96,12 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
     assert bot.guild_state[1].voice_client.play_calls == [b"10:hello", b"10:again"]
     assert bot.guild_state[2].voice_client.play_calls == [b"20:world"]
 
+    tasks = []
     for st in bot.guild_state.values():
         st.worker_task.cancel()
+        tasks.append(st.worker_task)
     if engine._worker_task:
         engine._worker_task.cancel()
+        tasks.append(engine._worker_task)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)

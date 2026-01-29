@@ -48,6 +48,8 @@ class SingleUserPCMCollector(voice_recv.AudioSink):
         # discord voice decode is typically 48kHz, stereo, 16-bit PCM
         self.sample_rate = 48000
         self.channels = 2
+        # Cap buffer to avoid unbounded growth if stop_listening stalls.
+        self.max_bytes = int(self.sample_rate * self.channels * 2 * (CLONE_RECORD_SECONDS + 2))
 
     def wants_opus(self) -> bool:
         return False  # we want decoded PCM
@@ -57,7 +59,9 @@ class SingleUserPCMCollector(voice_recv.AudioSink):
             return
         pcm = getattr(data, "pcm", None)
         if pcm:
-            self._buf.extend(pcm)
+            if len(self._buf) < self.max_bytes:
+                remaining = self.max_bytes - len(self._buf)
+                self._buf.extend(pcm[:remaining])
 
     def cleanup(self) -> None:
         # Required by discord.ext.voice_recv.AudioSink (abstract). We don't need to do anything here.
@@ -109,7 +113,7 @@ class GuildState:
     voice_channel_id: int
     text_channel_id: int
     queue: "asyncio.Queue[TTSJob]"
-    worker_task: asyncio.Task
+    worker_task: asyncio.Task | None
 
 
 class Bot(discord.Client):
@@ -133,6 +137,7 @@ class Bot(discord.Client):
         self._clone_joined: Dict[int, bool] = {}
         self._disguises: Dict[int, Dict[int, int]] = {}
         self._admin_commands: list[app_commands.Command] = []
+        self._global_queue_size = 0
         self._register_admin_command_objects()
 
     def _register_admin_command_objects(self) -> None:
@@ -195,7 +200,7 @@ class Bot(discord.Client):
             callback=sync_cmd,
         )
 
-        async def adddebugguild(interaction: discord.Interaction, guild_id: int):
+        async def adddebugguild(interaction: discord.Interaction, guild_id: str):
             await self._add_debug_guild(interaction, guild_id)
 
         adddebugguild = app_commands.describe(guild_id="Guild ID to enable admin commands for")(adddebugguild)
@@ -205,7 +210,7 @@ class Bot(discord.Client):
             callback=adddebugguild,
         )
 
-        async def removedebugguild(interaction: discord.Interaction, guild_id: int):
+        async def removedebugguild(interaction: discord.Interaction, guild_id: str):
             await self._remove_debug_guild(interaction, guild_id)
 
         removedebugguild = app_commands.describe(guild_id="Guild ID to disable admin commands for")(removedebugguild)
@@ -260,6 +265,51 @@ class Bot(discord.Client):
         if not self._is_debug_guild(guild_id):
             return False
         return self.admin_store.is_superadmin(int(user_id))
+
+    async def _cancel_task(self, task: asyncio.Task | None, *, name: str) -> None:
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            LOG.warning("Task cancel failed name=%s err=%s", name, exc)
+
+    def _decrement_global_queue(self, count: int = 1) -> None:
+        self._global_queue_size = max(0, self._global_queue_size - count)
+
+    def _drain_queue(self, queue: asyncio.Queue[TTSJob]) -> int:
+        drained = 0
+        while True:
+            try:
+                job = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            job.tts_future.cancel()
+            queue.task_done()
+            drained += 1
+        return drained
+
+    def _create_guild_state(
+        self,
+        guild_id: int,
+        voice_client: discord.VoiceClient,
+        voice_channel_id: int,
+        text_channel_id: int,
+    ) -> GuildState:
+        q: asyncio.Queue[TTSJob] = asyncio.Queue()
+        st = GuildState(
+            voice_client=voice_client,
+            voice_channel_id=voice_channel_id,
+            text_channel_id=text_channel_id,
+            queue=q,
+            worker_task=None,
+        )
+        self.guild_state[guild_id] = st
+        st.worker_task = asyncio.create_task(self._player_worker(guild_id))
+        return st
 
     async def setup_hook(self):
         LOG.info("Syncing application commands")
@@ -371,6 +421,7 @@ class Bot(discord.Client):
                 )
 
             finally:
+                self._decrement_global_queue()
                 st.queue.task_done()
         LOG.info("Player worker stopped guild_id=%s", guild_id)
 
@@ -417,33 +468,19 @@ class Bot(discord.Client):
             # IMPORTANT: VoiceRecvClient enables receiving audio for /clone
             vc = await channel.connect(cls=SafeVoiceRecvClient)
 
-        q: asyncio.Queue[TTSJob] = asyncio.Queue()
         # Replace existing state cleanly
         old = self.guild_state.get(guild_id)
         if old:
-            try:
-                old.worker_task.cancel()
-            except Exception:
-                pass
-            while True:
-                try:
-                    job = old.queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-                job.tts_future.cancel()
-                old.queue.task_done()
+            await self._cancel_task(old.worker_task, name="join-replace-worker")
+            drained = self._drain_queue(old.queue)
+            self._decrement_global_queue(drained)
 
-        # Create state first, then start worker (avoid KeyError race)
-        placeholder_task = asyncio.create_task(asyncio.sleep(0))
-        self.guild_state[guild_id] = GuildState(
+        self._create_guild_state(
+            guild_id=guild_id,
             voice_client=vc,
             voice_channel_id=int(channel.id),
             text_channel_id=int(interaction.channel_id),
-            queue=q,
-            worker_task=placeholder_task,
         )
-        self.guild_state[guild_id].worker_task.cancel()  # cancel placeholder
-        self.guild_state[guild_id].worker_task = asyncio.create_task(self._player_worker(guild_id))
         if self._cloning_channels.get(guild_id) == int(channel.id):
             self._clone_joined[guild_id] = True
 
@@ -467,17 +504,9 @@ class Bot(discord.Client):
             await interaction.response.send_message("I'm not connected.", ephemeral=True)
             return
 
-        try:
-            st.worker_task.cancel()
-        except Exception:
-            pass
-        while True:
-            try:
-                job = st.queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-            job.tts_future.cancel()
-            st.queue.task_done()
+        await self._cancel_task(st.worker_task, name="leave-worker")
+        drained = self._drain_queue(st.queue)
+        self._decrement_global_queue(drained)
         await st.voice_client.disconnect(force=True)
         self.guild_state.pop(int(interaction.guild_id), None)
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
@@ -550,26 +579,24 @@ class Bot(discord.Client):
             if not st or not st.voice_client.is_connected():
                 # connect and create state
                 vc = await member.voice.channel.connect(cls=SafeVoiceRecvClient)
-                q: asyncio.Queue[TTSJob] = asyncio.Queue()
-
-                placeholder_task = asyncio.create_task(asyncio.sleep(0))
-                self.guild_state[guild_id] = GuildState(
+                st = self._create_guild_state(
+                    guild_id=guild_id,
                     voice_client=vc,
                     voice_channel_id=int(member.voice.channel.id),
                     text_channel_id=int(interaction.channel_id),
-                    queue=q,
-                    worker_task=placeholder_task,
                 )
-                self.guild_state[guild_id].worker_task.cancel()
-                self.guild_state[guild_id].worker_task = asyncio.create_task(self._player_worker(guild_id))
-                st = self.guild_state[guild_id]
             else:
                 # move to caller channel (so we can hear them)
                 try:
                     await st.voice_client.move_to(member.voice.channel)
                     st.voice_channel_id = int(member.voice.channel.id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    LOG.warning(
+                        "Move to caller channel failed guild_id=%s channel_id=%s err=%s",
+                        interaction.guild_id,
+                        member.voice.channel.id,
+                        exc,
+                    )
 
             vc = st.voice_client
 
@@ -662,17 +689,9 @@ class Bot(discord.Client):
                 if not preexisting_connected and not self._clone_joined.get(guild_id, False):
                     st = self.guild_state.get(guild_id)
                     if st:
-                        try:
-                            st.worker_task.cancel()
-                        except Exception:
-                            pass
-                        while True:
-                            try:
-                                job = st.queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                            job.tts_future.cancel()
-                            st.queue.task_done()
+                        await self._cancel_task(st.worker_task, name="clone-cleanup-worker")
+                        drained = self._drain_queue(st.queue)
+                        self._decrement_global_queue(drained)
                         await st.voice_client.disconnect(force=True)
                         self.guild_state.pop(guild_id, None)
                         LOG.info("Left voice after clone guild_id=%s", interaction.guild_id)
@@ -810,7 +829,7 @@ class Bot(discord.Client):
         await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
         LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
 
-    async def _add_debug_guild(self, interaction: discord.Interaction, guild_id: int) -> None:
+    async def _add_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
@@ -818,7 +837,11 @@ class Bot(discord.Client):
         if not self._is_admin(int(interaction.user.id), current_gid):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
-        target_gid = int(guild_id)
+        try:
+            target_gid = int(guild_id)
+        except (TypeError, ValueError):
+            await interaction.response.send_message("Guild ID must be a number.", ephemeral=True)
+            return
         self.admin_store.add_debug_guild(target_gid)
         self._debug_guilds.add(target_gid)
         self._register_admin_commands_for_guild(target_gid)
@@ -826,7 +849,7 @@ class Bot(discord.Client):
         await interaction.response.send_message(f"Enabled admin commands for guild_id={target_gid}.", ephemeral=True)
         LOG.info("Added debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
 
-    async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: int) -> None:
+    async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
@@ -834,7 +857,11 @@ class Bot(discord.Client):
         if not self._is_admin(int(interaction.user.id), current_gid):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
-        target_gid = int(guild_id)
+        try:
+            target_gid = int(guild_id)
+        except (TypeError, ValueError):
+            await interaction.response.send_message("Guild ID must be a number.", ephemeral=True)
+            return
         removed = self.admin_store.remove_debug_guild(target_gid)
         self._debug_guilds.discard(target_gid)
         self._disguises.pop(target_gid, None)
@@ -908,7 +935,11 @@ class Bot(discord.Client):
 
         # Enforce queue limits (global + per-guild)
         guild_qsize = st.queue.qsize()
-        global_qsize = sum(s.queue.qsize() for s in self.guild_state.values())
+        global_qsize = self._global_queue_size
+        if GLOBAL_QUEUE_LIMIT > 0 and global_qsize == 0:
+            # Safety net for tests or external queue manipulation.
+            global_qsize = sum(s.queue.qsize() for s in self.guild_state.values())
+            self._global_queue_size = global_qsize
         if (GUILD_QUEUE_LIMIT > 0 and guild_qsize >= GUILD_QUEUE_LIMIT) or (
             GLOBAL_QUEUE_LIMIT > 0 and global_qsize >= GLOBAL_QUEUE_LIMIT
         ):
@@ -921,6 +952,7 @@ class Bot(discord.Client):
         # Enqueue TTS in the engine, then queue playback in-order for this guild
         tts_future = await self.tts.enqueue(int(message.guild.id), voice_id, text)
         await st.queue.put(TTSJob(tts_future=tts_future))
+        self._global_queue_size += 1
         qsize = st.queue.qsize()
         if qsize and qsize % 10 == 0:
             LOG.info("Guild queue size=%d guild_id=%s", qsize, message.guild.id)

@@ -37,11 +37,12 @@ This project runs a Discord bot that reads messages from a selected text channel
 - Scheduler batches across guilds while ensuring round-robin fairness (one per guild per cycle; fills remaining slots if fewer guilds).
 - Queue limits are enforced at ingest (global + per-guild); rejected messages get a ❌ reaction.
 - Admin roles are stored in SQLite with two levels: admin and superadmin (master superadmins from env).
+- Admin commands are only registered in debug guilds; other guilds have no admin behavior.
 
 ## Config (Environment)
 - `DISCORD_TOKEN`: bot token.
-- `DISCORD_ADMIN_ENABLED`: enable/disable admin commands and disguises.
-- `DISCORD_SUPERADMIN_ID`: comma-separated list of superadmin IDs (must include txoka).
+- `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs (must include txoka).
+- `DISCORD_DEBUG_GUILD_IDS`: comma-separated list of guild IDs that get admin commands.
 - `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
 - `QWEN_TTS_*`: model/runtime settings.
 - `QWEN_TTS_GLOBAL_QUEUE_LIMIT` / `QWEN_TTS_GUILD_QUEUE_LIMIT`: queue limits.

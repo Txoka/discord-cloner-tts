@@ -44,6 +44,8 @@ make logs
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
 - `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
 - `/adminlist` - Admins only: list all admins and their roles.
+- `/adddebugguild <guild_id>` - Admins only: enable admin commands for a guild.
+- `/removedebugguild <guild_id>` - Admins only: disable admin commands for a guild.
 - `/sync` - Admins only: sync slash commands to the current guild.
 
 ## Configuration
@@ -51,8 +53,8 @@ Environment variables (set in `.env`):
 ```env
 # Required
 DISCORD_TOKEN=...
-DISCORD_ADMIN_ENABLED=1
-DISCORD_SUPERADMIN_ID=441597233150951425   # Comma-separated IDs
+DISCORD_SUPERADMIN_IDS=441597233150951425   # Comma-separated IDs
+DISCORD_DEBUG_GUILD_IDS=                   # Comma-separated guild IDs
 
 # Model and runtime
 QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-Base
@@ -91,7 +93,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Admin roles are stored in a SQLite database under `./data`.
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
 - Messages are rejected with a ❌ reaction when queue limits are exceeded.
-- Set `DISCORD_ADMIN_ENABLED=0` to disable all admin commands and disguises.
+- Admin commands only exist in guilds listed in `DISCORD_DEBUG_GUILD_IDS` (and stored in the DB).
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

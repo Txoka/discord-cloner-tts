@@ -6,6 +6,7 @@ import pytest
 import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminRecord
 from app.discord.bot import Bot, GuildState, TTSJob
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
@@ -69,7 +70,7 @@ async def test_player_worker_orders_playback(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[guild_id].worker_task.cancel()
+    await cancel_task(bot.guild_state[guild_id].worker_task)
     worker = asyncio.create_task(bot._player_worker(guild_id))
 
     loop = asyncio.get_running_loop()
@@ -82,17 +83,12 @@ async def test_player_worker_orders_playback(monkeypatch):
     fut2.set_result(b"two")
 
     await q.join()
-    worker.cancel()
-    try:
-        await worker
-    except asyncio.CancelledError:
-        pass
+    await cancel_task(worker)
 
     assert vc.play_calls == [b"pcm:one", b"pcm:two"]
 
 
 @pytest.mark.asyncio
-@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_on_message_filters_and_enqueues(monkeypatch):
     class FakeTTS:
         def __init__(self) -> None:
@@ -123,7 +119,7 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     await bot.on_message(msg)
     assert tts.enqueued
@@ -164,7 +160,7 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     # Fill queue to limit
     loop = asyncio.get_running_loop()
@@ -206,7 +202,7 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     await bot.on_message(msg)
     assert tts.last[1] == 5

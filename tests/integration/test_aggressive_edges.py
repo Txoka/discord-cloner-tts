@@ -8,6 +8,7 @@ import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminStore
 from app.discord.bot import Bot, GuildState, TTSJob
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import (
     FakeChannel,
     FakeGuild,
@@ -80,8 +81,7 @@ async def test_round_robin_fairness_under_skew(monkeypatch, tmp_path):
 
     await asyncio.gather(*futs)
 
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)
 
 
 @pytest.mark.asyncio
@@ -98,7 +98,7 @@ async def test_global_queue_limit_concurrent(monkeypatch, tmp_path):
             queue=q,
             worker_task=asyncio.create_task(asyncio.sleep(0)),
         )
-        bot.guild_state[gid].worker_task.cancel()
+        await cancel_task(bot.guild_state[gid].worker_task)
 
     monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 2)
     monkeypatch.setattr(bot_mod, "GUILD_QUEUE_LIMIT", 10)
@@ -133,7 +133,7 @@ async def test_remove_debug_guild_race_with_messages(tmp_path, monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     async def fake_sync(*_args, **_kwargs):
         return None
@@ -169,7 +169,6 @@ async def test_join_leave_sequence_during_clone(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_player_handles_playback_error(monkeypatch):
     class ErrVoiceClient(FakeVoiceClient):
         def play(self, src: object, after=None) -> None:
@@ -185,7 +184,7 @@ async def test_player_handles_playback_error(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
 
@@ -195,5 +194,4 @@ async def test_player_handles_playback_error(monkeypatch):
     await q.put(TTSJob(tts_future=fut))
     fut.set_result(b"wav")
     await q.join()
-    worker.cancel()
-    await asyncio.gather(worker, return_exceptions=True)
+    await cancel_task(worker)

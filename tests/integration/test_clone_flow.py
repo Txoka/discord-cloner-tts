@@ -7,6 +7,7 @@ import pytest
 
 import app.discord.bot as bot_mod
 from app.discord.bot import Bot, GuildState
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import (
     FakeGuild,
     FakeInteraction,
@@ -89,8 +90,7 @@ async def test_clone_creates_prompt_file(monkeypatch, tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
-    await asyncio.gather(bot.guild_state[1].worker_task, return_exceptions=True)
+    await cancel_task(bot.guild_state[1].worker_task)
 
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
 
@@ -146,8 +146,7 @@ async def test_clone_keeps_prejoined_channel(monkeypatch, tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
-    await asyncio.gather(bot.guild_state[1].worker_task, return_exceptions=True)
+    await cancel_task(bot.guild_state[1].worker_task)
     bot.guild_state[1].voice_channel_id = int(member.voice.channel.id)
 
     monkeypatch.setattr(bot_mod, "SingleUserPCMCollector", FakeCollector)

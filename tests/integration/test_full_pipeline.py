@@ -10,6 +10,7 @@ import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminStore
 from app.discord.bot import Bot, GuildState, TTSJob
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
@@ -148,11 +149,8 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
     finally:
         tasks = []
         for st in bot.guild_state.values():
-            st.worker_task.cancel()
-            tasks.append(st.worker_task)
-        if engine._worker_task:
-            engine._worker_task.cancel()
-            tasks.append(engine._worker_task)
+            tasks.append(cancel_task(st.worker_task))
+        tasks.append(cancel_task(engine._worker_task))
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -238,8 +236,7 @@ async def test_full_pipeline_rejects_when_queues_full(monkeypatch, tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
-    await asyncio.gather(bot.guild_state[1].worker_task, return_exceptions=True)
+    await cancel_task(bot.guild_state[1].worker_task)
 
     loop = asyncio.get_running_loop()
     await q.put(TTSJob(tts_future=loop.create_future()))

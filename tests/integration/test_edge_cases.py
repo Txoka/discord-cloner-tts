@@ -8,6 +8,7 @@ import pytest
 import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminStore
 from app.discord.bot import Bot, GuildState, TTSJob
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import (
     FakeChannel,
     FakeGuild,
@@ -90,7 +91,6 @@ class FakeMember:
 
 
 @pytest.mark.asyncio
-@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_clone_rejects_second_attempt_same_guild(tmp_path, monkeypatch):
     tts = FakeTTS(tmp_path)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())
@@ -144,8 +144,7 @@ async def test_clone_allows_parallel_guilds(tmp_path, monkeypatch):
     tasks = []
     for st in bot.guild_state.values():
         try:
-            st.worker_task.cancel()
-            tasks.append(st.worker_task)
+            tasks.append(cancel_task(st.worker_task))
         except Exception:
             pass
     if tasks:
@@ -170,7 +169,7 @@ async def test_on_message_ignored_for_cloning_user(tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     bot._cloning_users.add(user.id)
     await bot.on_message(msg)
@@ -190,7 +189,7 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     worker = asyncio.create_task(bot._player_worker(1))
 
@@ -204,8 +203,7 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
     fut2.set_exception(RuntimeError("boom"))
 
     await q.join()
-    worker.cancel()
-    await asyncio.gather(worker, return_exceptions=True)
+    await cancel_task(worker)
 
     assert vc.play_calls == []
 
@@ -231,8 +229,8 @@ async def test_global_queue_limit_rejects_other_guild(monkeypatch, tmp_path):
         queue=q2,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
-    bot.guild_state[2].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
+    await cancel_task(bot.guild_state[2].worker_task)
 
     loop = asyncio.get_running_loop()
     await q1.put(TTSJob(tts_future=loop.create_future()))
@@ -265,7 +263,7 @@ async def test_player_reconnects_after_disconnect(monkeypatch):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     async def fake_ensure(_gid: int):
         vc.connected = True
@@ -281,8 +279,7 @@ async def test_player_reconnects_after_disconnect(monkeypatch):
     fut.set_result(b"wav")
 
     await q.join()
-    worker.cancel()
-    await asyncio.gather(worker, return_exceptions=True)
+    await cancel_task(worker)
     assert vc.play_calls
 
 
@@ -306,7 +303,7 @@ async def test_disguise_missing_prompt_skips(monkeypatch, tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     msg = FakeMessage(
         guild=FakeGuild(1),
@@ -424,7 +421,7 @@ async def test_message_with_only_link_skips(tmp_path):
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
-    bot.guild_state[1].worker_task.cancel()
+    await cancel_task(bot.guild_state[1].worker_task)
 
     msg = FakeMessage(
         guild=FakeGuild(1),

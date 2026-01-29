@@ -6,6 +6,7 @@ import pytest
 import app.discord.bot as bot_mod
 from app.discord.bot import Bot, GuildState
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
 
@@ -98,10 +99,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
 
     tasks = []
     for st in bot.guild_state.values():
-        st.worker_task.cancel()
-        tasks.append(st.worker_task)
-    if engine._worker_task:
-        engine._worker_task.cancel()
-        tasks.append(engine._worker_task)
+        tasks.append(cancel_task(st.worker_task))
+    tasks.append(cancel_task(engine._worker_task))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)

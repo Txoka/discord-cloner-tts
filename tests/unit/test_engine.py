@@ -8,6 +8,7 @@ import pytest
 import torch
 
 from app.tts.engine import TTSEngine
+from tests.helpers.asyncio_utils import cancel_task
 
 
 @dataclass
@@ -113,8 +114,7 @@ async def test_queue_worker_resolves_future(monkeypatch, tmp_path):
     fut = await engine.enqueue(1, 1, "hi")
     out = await asyncio.wait_for(fut, 1)
     assert out == b"wav"
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)
 
 
 @pytest.mark.asyncio
@@ -133,8 +133,7 @@ async def test_queue_worker_skips_cancelled(monkeypatch, tmp_path):
     fut = await engine.enqueue(1, 1, "hi")
     fut.cancel()
     await asyncio.sleep(0)
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)
     assert fut.cancelled()
 
 
@@ -167,5 +166,4 @@ async def test_queue_worker_round_robin(monkeypatch, tmp_path):
 
     assert captured
     assert captured[0] == [(1, "g1-a"), (2, "g2-a"), (1, "g1-b")]
-    if engine._worker_task:
-        engine._worker_task.cancel()
+    await cancel_task(engine._worker_task)

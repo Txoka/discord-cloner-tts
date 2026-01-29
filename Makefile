@@ -7,8 +7,6 @@ GROUP_ID := $(shell id -g)
 
 prepare:
 	mkdir -p data
-	@if [ ! -w data ]; then sudo chown $(USER_ID):$(GROUP_ID) data; fi
-	@chmod 775 data
 
 build:
 	$(MAKE) prepare

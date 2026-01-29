@@ -6,16 +6,16 @@ GROUP_ID := $(shell id -g)
 .PHONY: build up down logs test
 
 build:
-	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) sudo -E docker compose build
+	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) docker compose build
 
 up:
-	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) sudo -E docker compose up --build -d
+	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) docker compose up --build -d
 
 down:
-	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) sudo -E docker compose down
+	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) docker compose down
 
 logs:
-	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) sudo -E docker compose logs -f
+	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) docker compose logs -f
 
 test:
-	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) sudo -E docker compose --profile test run --rm --build qwen-tts-test
+	USER_ID=$(USER_ID) GROUP_ID=$(GROUP_ID) docker compose --profile test run --rm --build qwen-tts-test

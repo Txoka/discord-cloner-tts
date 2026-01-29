@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import app.discord.bot as bot_mod
+from app.discord.admin_store import AdminStore
 from app.discord.bot import Bot, GuildState, TTSJob
 from tests.helpers.fakes import (
     FakeChannel,
@@ -202,3 +203,224 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
     await asyncio.gather(worker, return_exceptions=True)
 
     assert vc.play_calls == []
+
+
+@pytest.mark.asyncio
+async def test_global_queue_limit_rejects_other_guild(monkeypatch, tmp_path):
+    tts = FakeTTS(tmp_path)
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())
+
+    q1: asyncio.Queue[TTSJob] = asyncio.Queue()
+    q2: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q1,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[2] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=2,
+        text_channel_id=20,
+        queue=q2,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+    bot.guild_state[2].worker_task.cancel()
+
+    loop = asyncio.get_running_loop()
+    await q1.put(TTSJob(tts_future=loop.create_future()))
+
+    monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 1)
+    monkeypatch.setattr(bot_mod, "GUILD_QUEUE_LIMIT", 10)
+
+    msg = FakeMessage(
+        guild=FakeGuild(2),
+        channel=FakeChannel(20),
+        author=FakeUser(5),
+        clean_content="hello",
+    )
+
+    await bot.on_message(msg)
+    assert not tts.enqueued
+    assert "❌" in msg.reactions
+
+
+@pytest.mark.asyncio
+async def test_player_reconnects_after_disconnect(monkeypatch):
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    vc = FakeVoiceClient()
+    vc.connected = False
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=vc,
+        voice_channel_id=1,
+        text_channel_id=1,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    async def fake_ensure(_gid: int):
+        vc.connected = True
+
+    monkeypatch.setattr(bot, "_ensure_voice_connected", fake_ensure)
+    worker = asyncio.create_task(bot._player_worker(1))
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await q.put(TTSJob(tts_future=fut))
+    fut.set_result(b"wav")
+
+    await q.join()
+    worker.cancel()
+    await asyncio.gather(worker, return_exceptions=True)
+    assert vc.play_calls
+
+
+@pytest.mark.asyncio
+async def test_disguise_missing_prompt_skips(monkeypatch, tmp_path):
+    tts = FakeTTS(tmp_path)
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())
+    bot._debug_guilds.add(1)
+    bot._disguises.setdefault(1, {})[5] = 99
+
+    def fake_prompt_exists(user_id: int) -> bool:
+        return int(user_id) != 99
+
+    tts.prompt_exists = fake_prompt_exists  # type: ignore[assignment]
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    msg = FakeMessage(
+        guild=FakeGuild(1),
+        channel=FakeChannel(10),
+        author=FakeUser(5),
+        clean_content="hello",
+    )
+
+    await bot.on_message(msg)
+    assert not tts.enqueued
+
+
+@pytest.mark.asyncio
+async def test_remove_debug_guild_clears_disguises(tmp_path):
+    tts = FakeTTS(tmp_path)
+    admin_store = AdminStore(tmp_path / "admins.sqlite3", master_superadmins=[1], debug_guild_ids=[1])
+    admin_store.init_schema()
+    admin_store.bootstrap_superadmins()
+    admin_store.bootstrap_debug_guilds()
+
+    bot = Bot(tts=tts, admin_store=admin_store)
+    bot._debug_guilds.add(1)
+    bot._disguises[1] = {5: 99}
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 1})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    await bot._remove_debug_guild(FakeInteraction(), 1)
+    assert 1 not in bot._disguises
+
+
+@pytest.mark.asyncio
+async def test_concurrent_add_remove_debug_guild(tmp_path, monkeypatch):
+    admin_store = AdminStore(tmp_path / "admins.sqlite3", master_superadmins=[1], debug_guild_ids=[1])
+    admin_store.init_schema()
+    admin_store.bootstrap_superadmins()
+    admin_store.bootstrap_debug_guilds()
+
+    bot = Bot(tts=None, admin_store=admin_store)  # type: ignore[arg-type]
+    bot._debug_guilds.add(1)
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 1})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    inter = FakeInteraction()
+    await asyncio.gather(bot._add_debug_guild(inter, 2), bot._remove_debug_guild(inter, 2))
+    # End state may be either, but should not error
+    assert inter.messages
+
+
+@pytest.mark.asyncio
+async def test_superadmin_not_removable(tmp_path):
+    admin_store = AdminStore(tmp_path / "admins.sqlite3", master_superadmins=[1], debug_guild_ids=[1])
+    admin_store.init_schema()
+    admin_store.bootstrap_superadmins()
+    admin_store.bootstrap_debug_guilds()
+
+    bot = Bot(tts=None, admin_store=admin_store)  # type: ignore[arg-type]
+    bot._debug_guilds.add(1)
+
+    class FakeMember:
+        def __init__(self, user_id: int):
+            self.id = int(user_id)
+            self.mention = f"<@{user_id}>"
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 1})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    interaction = FakeInteraction()
+    await bot._remove_admin(interaction, FakeMember(1))
+    assert interaction.messages
+    assert "not removable" in interaction.messages[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_message_with_only_link_skips(tmp_path):
+    tts = FakeTTS(tmp_path)
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    msg = FakeMessage(
+        guild=FakeGuild(1),
+        channel=FakeChannel(10),
+        author=FakeUser(5),
+        clean_content="https://example.com",
+    )
+
+    await bot.on_message(msg)
+    assert not tts.enqueued

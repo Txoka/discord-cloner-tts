@@ -150,8 +150,38 @@ def trim_silence_energy(
 
     Returns possibly-trimmed audio. If no voiced region is detected, returns original x.
     """
-    if x.size == 0:
+    start_samp, end_samp = compute_trim_bounds(
+        x,
+        sr,
+        frame_ms=frame_ms,
+        hop_ms=hop_ms,
+        noise_percentile=noise_percentile,
+        snr_db=snr_db,
+        floor_db=floor_db,
+        pad_ms=pad_ms,
+        min_keep_ms=min_keep_ms,
+        min_voiced_ms=min_voiced_ms,
+    )
+    if start_samp == 0 and end_samp == x.size:
         return x
+    return x[start_samp:end_samp]
+
+
+def compute_trim_bounds(
+    x: np.ndarray,
+    sr: int,
+    frame_ms: int = 30,
+    hop_ms: int = 10,
+    noise_percentile: float = 10.0,
+    snr_db: float = 10.0,
+    floor_db: float = -45.0,
+    pad_ms: int = 150,
+    min_keep_ms: int = 300,
+    min_voiced_ms: int = 60,
+) -> tuple[int, int]:
+    """Return (start, end) indices for VAD-based trimming."""
+    if x.size == 0:
+        return 0, x.size
 
     x = x.astype(np.float32, copy=False)
     frame = max(1, int(sr * frame_ms / 1000))
@@ -160,12 +190,12 @@ def trim_silence_energy(
     min_keep = int(sr * min_keep_ms / 1000)
 
     if x.size < frame:
-        return x
+        return 0, x.size
 
     # Compute frame RMS dB
     starts = np.arange(0, x.size - frame + 1, hop, dtype=np.int64)
     if starts.size == 0:
-        return x
+        return 0, x.size
 
     # Vectorized framing via striding is possible but keep it simple and robust.
     rms = np.empty((starts.size,), dtype=np.float32)
@@ -175,9 +205,6 @@ def trim_silence_energy(
         rms[i] = np.sqrt(np.mean(seg * seg) + eps)
 
     db = 20.0 * np.log10(np.maximum(rms, eps))
-
-    def find_voiced(thr_db: float, floor_db_value: float) -> np.ndarray:
-        return db >= max(thr_db, floor_db_value)
 
     def find_voiced_bounds(mask: np.ndarray) -> tuple[int, int] | None:
         min_frames = max(1, int(round(min_voiced_ms / max(hop_ms, 1))))
@@ -205,13 +232,13 @@ def trim_silence_energy(
         mad = 1e-6
     thr_db = db_median + 3.0 * mad
 
-    voiced = find_voiced(thr_db, floor_db)
+    voiced = db >= max(thr_db, floor_db)
     if not np.any(voiced):
-        return x
+        return 0, x.size
 
     bounds = find_voiced_bounds(voiced)
     if bounds is None:
-        return x
+        return 0, x.size
     first, last = bounds
 
     start_samp = int(starts[first])
@@ -222,6 +249,6 @@ def trim_silence_energy(
     end_samp = min(x.size, end_samp + pad)
 
     if end_samp - start_samp < min_keep:
-        return x
+        return 0, x.size
 
-    return x[start_samp:end_samp]
+    return start_samp, end_samp

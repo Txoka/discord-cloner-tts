@@ -30,6 +30,10 @@
 
 ## Commit & Pull Request Guidelines
 - This repository uses Git with a `main` branch.
+- Make incremental commits while working; avoid large monolithic commits.
+- Create a feature branch before significant changes and merge it into `dev`.
+- Only the repository owner merges `dev` into `main`.
+- If merge conflicts arise, resolve them unless they involve user-owned changes; when uncertain, ask first.
 - Use clear, imperative commit messages (e.g., “Add voice normalization options”).
 - PRs should describe behavior changes, configuration updates, and any new dependencies.
 - Include usage notes if new environment variables are introduced.

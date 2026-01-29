@@ -1,5 +1,7 @@
 voices/
 models/
+data/
 .env
 *.pyc
 __pycache__
+*.sqlite3

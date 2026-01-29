@@ -20,7 +20,10 @@ from app.config import (
     CLONE_MIN_SECONDS,
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
+    GUILD_QUEUE_LIMIT,
+    GLOBAL_QUEUE_LIMIT,
 )
+from app.discord.admin_store import AdminStore
 from app.tts.audio import prepare_tts_pcm, trim_silence_energy
 from app.tts.engine import TTSEngine
 from app.tts.text import preprocess_discord_text
@@ -110,7 +113,7 @@ class GuildState:
 
 
 class Bot(discord.Client):
-    def __init__(self, tts: TTSEngine):
+    def __init__(self, tts: TTSEngine, admin_store: AdminStore):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.messages = True
@@ -119,16 +122,19 @@ class Bot(discord.Client):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
         self.tts = tts
+        self.admin_store = admin_store
         self.guild_state: Dict[int, GuildState] = {}
 
         # Prevent concurrent enrollments per guild + suppress TTS for enrolling user
         self._clone_lock: Dict[int, asyncio.Lock] = {}
         self._cloning_users: set[int] = set()
-        self._admins: set[int] = {441597233150951425}
         self._disguises: Dict[int, int] = {}
 
     def _is_admin(self, user_id: int) -> bool:
-        return int(user_id) in self._admins
+        return self.admin_store.is_admin(int(user_id))
+
+    def _is_superadmin(self, user_id: int) -> bool:
+        return self.admin_store.is_superadmin(int(user_id))
 
     async def setup_hook(self):
         LOG.info("Syncing application commands")
@@ -551,18 +557,43 @@ class Bot(discord.Client):
         )
         LOG.info("Disguise set admin_id=%s target_id=%s", caller_id, target_id)
 
-    async def _add_admin(self, interaction: discord.Interaction, target: discord.Member) -> None:
+    async def _add_admin(self, interaction: discord.Interaction, target: discord.Member, role: str = "admin") -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if int(interaction.user.id) != 441597233150951425:
-            await interaction.response.send_message("Only txoka can add admins.", ephemeral=True)
+        if not self._is_superadmin(int(interaction.user.id)):
+            await interaction.response.send_message("Superadmins only.", ephemeral=True)
             return
 
         target_id = int(target.id)
-        self._admins.add(target_id)
-        await interaction.response.send_message(f"Added admin: {target.mention}.", ephemeral=True)
-        LOG.info("Admin added by txoka target_id=%s", target_id)
+        role = role.strip().lower()
+        if role not in {"admin", "superadmin"}:
+            await interaction.response.send_message("Role must be 'admin' or 'superadmin'.", ephemeral=True)
+            return
+
+        self.admin_store.upsert_admin(target_id, role)
+        await interaction.response.send_message(f"Added {role}: {target.mention}.", ephemeral=True)
+        LOG.info("Admin added role=%s by user_id=%s target_id=%s", role, interaction.user.id, target_id)
+
+    async def _remove_admin(self, interaction: discord.Interaction, target: discord.Member) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self._is_superadmin(int(interaction.user.id)):
+            await interaction.response.send_message("Superadmins only.", ephemeral=True)
+            return
+
+        target_id = int(target.id)
+        removed = self.admin_store.remove_admin(target_id)
+        if removed:
+            await interaction.response.send_message(f"Removed admin: {target.mention}.", ephemeral=True)
+            LOG.info("Admin removed by user_id=%s target_id=%s", interaction.user.id, target_id)
+            return
+
+        await interaction.response.send_message(
+            "That user is not removable (or is a master superadmin).",
+            ephemeral=True,
+        )
 
     async def _sync_commands(self, interaction: discord.Interaction) -> None:
         if int(interaction.user.id) != 441597233150951425:
@@ -634,8 +665,20 @@ class Bot(discord.Client):
         if not text:
             return
 
+        # Enforce queue limits (global + per-guild)
+        guild_qsize = st.queue.qsize()
+        global_qsize = sum(s.queue.qsize() for s in self.guild_state.values())
+        if (GUILD_QUEUE_LIMIT > 0 and guild_qsize >= GUILD_QUEUE_LIMIT) or (
+            GLOBAL_QUEUE_LIMIT > 0 and global_qsize >= GLOBAL_QUEUE_LIMIT
+        ):
+            try:
+                await message.add_reaction("❌")
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                LOG.warning("Failed to add reject reaction message_id=%s err=%s", message.id, exc)
+            return
+
         # Enqueue TTS in the engine, then queue playback in-order for this guild
-        tts_future = await self.tts.enqueue(voice_id, text)
+        tts_future = await self.tts.enqueue(int(message.guild.id), voice_id, text)
         await st.queue.put(TTSJob(tts_future=tts_future))
         qsize = st.queue.qsize()
         if qsize and qsize % 10 == 0:

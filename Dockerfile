@@ -13,6 +13,7 @@ RUN apt-get update \
         sox \
         libsndfile1 \
         git \
+        sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

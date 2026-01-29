@@ -19,6 +19,14 @@ DEFAULT_LANGUAGE = os.environ.get("QWEN_TTS_LANG", "Auto")
 MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
 LOG_LEVEL = os.environ.get("QWEN_TTS_LOG_LEVEL", "INFO")
 
+# Admins
+DISCORD_SUPERADMIN_ID = os.environ.get("DISCORD_SUPERADMIN_ID", "441597233150951425")
+SUPERADMIN_IDS = [
+    int(x)
+    for x in (s.strip() for s in DISCORD_SUPERADMIN_ID.split(","))
+    if x
+]
+
 # Volume normalization (simple RMS normalization per utterance)
 NORM_MODE = os.environ.get("QWEN_TTS_NORM", "none")  # none|rms|peak
 TARGET_RMS_DBFS = float(os.environ.get("QWEN_TTS_TARGET_RMS_DBFS", "-20"))
@@ -28,6 +36,8 @@ MAX_GAIN_DB = float(os.environ.get("QWEN_TTS_MAX_GAIN_DB", "12"))
 # Text handling
 MAX_CHARS_PER_MESSAGE = int(os.environ.get("QWEN_TTS_MAX_CHARS", "1024"))
 MAX_BATCH_SIZE = max(1, int(os.environ.get("QWEN_TTS_MAX_BATCH_SIZE", "4")))
+GLOBAL_QUEUE_LIMIT = int(os.environ.get("QWEN_TTS_GLOBAL_QUEUE_LIMIT", "200"))
+GUILD_QUEUE_LIMIT = int(os.environ.get("QWEN_TTS_GUILD_QUEUE_LIMIT", "50"))
 
 # Voice-clone capture
 CLONE_RECORD_SECONDS = int(os.environ.get("QWEN_TTS_CLONE_SECONDS", "20"))
@@ -45,3 +55,4 @@ CLONE_SAMPLE_TEXT_ES = os.environ.get(
 
 # Storage
 VOICES_DIR = Path(os.environ.get("VOICES_DIR", str(BASE_DIR / "voices"))).resolve()
+ADMIN_DB_PATH = Path(os.environ.get("DISCORD_ADMIN_DB_PATH", str(BASE_DIR / "data" / "admins.sqlite3"))).resolve()

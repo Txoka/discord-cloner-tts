@@ -14,6 +14,14 @@ class FakePCMAudio:
         self.source = source
 
 
+class FakeAdminStore:
+    def is_admin(self, user_id: int) -> bool:
+        return True
+
+    def is_superadmin(self, user_id: int) -> bool:
+        return True
+
+
 @pytest.mark.asyncio
 async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
     engine = TTSEngine(tmp_path)
@@ -32,7 +40,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
 
     engine._process_batch = fake_process  # type: ignore[assignment]
 
-    bot = Bot(tts=engine)
+    bot = Bot(tts=engine, admin_store=FakeAdminStore())
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
     monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
 
@@ -41,6 +49,7 @@ async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):
         q: asyncio.Queue = asyncio.Queue()
         bot.guild_state[gid] = GuildState(
             voice_client=vc,
+            voice_channel_id=gid,
             text_channel_id=100 + gid,
             queue=q,
             worker_task=asyncio.create_task(bot._player_worker(gid)),

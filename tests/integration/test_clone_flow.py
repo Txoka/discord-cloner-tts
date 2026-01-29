@@ -50,10 +50,18 @@ class FakeTTS:
         self.exists_cache[int(user_id)] = bool(exists)
 
 
+class FakeAdminStore:
+    def is_admin(self, user_id: int) -> bool:
+        return True
+
+    def is_superadmin(self, user_id: int) -> bool:
+        return True
+
+
 @pytest.mark.asyncio
 async def test_clone_creates_prompt_file(monkeypatch, tmp_path):
     tts = FakeTTS(tmp_path)
-    bot = Bot(tts=tts)  # type: ignore[arg-type]
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
 
     vc = FakeVoiceClient()
     channel = FakeVoiceChannel(vc)
@@ -64,6 +72,7 @@ async def test_clone_creates_prompt_file(monkeypatch, tmp_path):
     q = asyncio.Queue()
     bot.guild_state[1] = GuildState(
         voice_client=vc,
+        voice_channel_id=1,
         text_channel_id=10,
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),

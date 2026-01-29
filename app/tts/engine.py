@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+from collections import deque
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, Optional, List, Tuple, Deque, Set
 
 import soundfile as sf
 import torch
@@ -32,6 +33,7 @@ LOG = logging.getLogger("qwen-discord-tts")
 
 @dataclass
 class _TTSRequest:
+    guild_id: int
     user_id: int
     text: str
     future: "asyncio.Future[Optional[bytes]]"
@@ -45,7 +47,12 @@ class TTSEngine:
         self._prompt_exists_cache: Dict[int, bool] = {}
 
         self._model: Optional[Qwen3TTSModel] = None
-        self._queue: Optional[asyncio.Queue[_TTSRequest]] = None
+        self._guild_queues: Dict[int, Deque[_TTSRequest]] = {}
+        self._active_guilds: Deque[int] = deque()
+        self._active_set: Set[int] = set()
+        self._queue_event = asyncio.Event()
+        self._queue_lock = asyncio.Lock()
+        self._pending_total = 0
         self._worker_task: Optional[asyncio.Task] = None
         self._worker_lock = asyncio.Lock()
 
@@ -77,47 +84,67 @@ class TTSEngine:
 
     async def _ensure_worker(self) -> None:
         async with self._worker_lock:
-            if self._queue is None:
-                self._queue = asyncio.Queue()
             if self._worker_task is None or self._worker_task.done():
                 LOG.info("Starting TTS queue worker")
                 self._worker_task = asyncio.create_task(self._queue_worker())
 
-    async def enqueue(self, user_id: int, text: str) -> "asyncio.Future[Optional[bytes]]":
+    async def enqueue(self, guild_id: int, user_id: int, text: str) -> "asyncio.Future[Optional[bytes]]":
         """Queue a TTS request and return a future that resolves to in-memory WAV bytes (or None)."""
         await self._ensure_worker()
-        assert self._queue is not None
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Optional[bytes]] = loop.create_future()
-        await self._queue.put(_TTSRequest(user_id=int(user_id), text=text, future=fut))
-        LOG.debug("Enqueued TTS user_id=%s queue_size=%d", user_id, self._queue.qsize())
+        req = _TTSRequest(guild_id=int(guild_id), user_id=int(user_id), text=text, future=fut)
+        async with self._queue_lock:
+            q = self._guild_queues.setdefault(int(guild_id), deque())
+            q.append(req)
+            self._pending_total += 1
+            if int(guild_id) not in self._active_set:
+                self._active_guilds.append(int(guild_id))
+                self._active_set.add(int(guild_id))
+            self._queue_event.set()
+        LOG.debug("Enqueued TTS guild_id=%s user_id=%s pending=%d", guild_id, user_id, self._pending_total)
         return fut
 
     async def _queue_worker(self) -> None:
-        assert self._queue is not None
         LOG.info("TTS worker loop running")
         while True:
-            req = await self._queue.get()
-            batch = [req]
+            await self._queue_event.wait()
+
+            batch: list[_TTSRequest] = []
             while len(batch) < MAX_BATCH_SIZE:
-                try:
-                    batch.append(self._queue.get_nowait())
-                except asyncio.QueueEmpty:
-                    break
+                async with self._queue_lock:
+                    if not self._active_guilds:
+                        self._queue_event.clear()
+                        break
+                    guild_id = self._active_guilds.popleft()
+                    self._active_set.discard(guild_id)
+                    q = self._guild_queues.get(guild_id)
+                    if not q:
+                        continue
+                    req = q.popleft()
+                    self._pending_total -= 1
+                    if q:
+                        self._active_guilds.append(guild_id)
+                        self._active_set.add(guild_id)
+                    else:
+                        self._guild_queues.pop(guild_id, None)
+                batch.append(req)
+
+            if not batch:
+                continue
 
             LOG.info(
                 "TTS queue batch size=%d pending_after=%d users=%s",
                 len(batch),
-                self._queue.qsize(),
+                self._pending_total,
                 [r.user_id for r in batch],
             )
 
             active: list[_TTSRequest] = []
             for r in batch:
                 if r.future.cancelled():
-                    self._queue.task_done()
-                else:
-                    active.append(r)
+                    continue
+                active.append(r)
 
             if not active:
                 continue
@@ -129,19 +156,15 @@ class TTSEngine:
                 for r in active:
                     if not r.future.cancelled():
                         r.future.set_exception(exc)
-                    self._queue.task_done()
                 continue
 
             for r, wav_bytes, err in results:
-                try:
-                    if r.future.cancelled():
-                        pass
-                    elif err is not None:
-                        r.future.set_exception(err)
-                    else:
-                        r.future.set_result(wav_bytes)
-                finally:
-                    self._queue.task_done()
+                if r.future.cancelled():
+                    continue
+                if err is not None:
+                    r.future.set_exception(err)
+                else:
+                    r.future.set_result(wav_bytes)
 
     # -----------------------------
     # Prompt storage / cache
@@ -308,7 +331,7 @@ class TTSEngine:
         if self._model is None:
             raise RuntimeError("Model not loaded")
 
-        results: list[tuple[_TTSRequest, Optional[Path], Optional[Exception]]] = []
+        results: list[tuple[_TTSRequest, Optional[bytes], Optional[Exception]]] = []
         valid_reqs: list[_TTSRequest] = []
         texts: list[str] = []
         batch_prompt_items: list[VoiceClonePromptItem] = []

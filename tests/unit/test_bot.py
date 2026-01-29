@@ -13,6 +13,14 @@ class FakePCMAudio:
         self.source = source
 
 
+class FakeAdminStore:
+    def is_admin(self, user_id: int) -> bool:
+        return True
+
+    def is_superadmin(self, user_id: int) -> bool:
+        return True
+
+
 def test_single_user_pcm_collector_ignores_other_user():
     collector = bot_mod.SingleUserPCMCollector(target_user_id=1)
     class Data:
@@ -25,7 +33,7 @@ def test_single_user_pcm_collector_ignores_other_user():
 @pytest.mark.asyncio
 async def test_player_worker_orders_playback(monkeypatch):
     vc = FakeVoiceClient()
-    bot = Bot(tts=None)  # type: ignore[arg-type]
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     async def fake_to_thread(func, *args, **kwargs):
         return func(*args, **kwargs)
 
@@ -37,6 +45,7 @@ async def test_player_worker_orders_playback(monkeypatch):
     guild_id = 1
     bot.guild_state[guild_id] = GuildState(
         voice_client=vc,
+        voice_channel_id=1,
         text_channel_id=1,
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
@@ -68,15 +77,15 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
         def prompt_exists(self, user_id: int) -> bool:
             return True
 
-        async def enqueue(self, user_id: int, text: str):
-            self.enqueued.append((user_id, text))
+        async def enqueue(self, guild_id: int, user_id: int, text: str):
+            self.enqueued.append((guild_id, user_id, text))
             loop = asyncio.get_running_loop()
             fut = loop.create_future()
             fut.set_result(b"wav")
             return fut
 
     tts = FakeTTS()
-    bot = Bot(tts=tts)  # type: ignore[arg-type]
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)
     channel = FakeChannel(10)
     user = FakeUser(5)
@@ -85,6 +94,7 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
     q: asyncio.Queue[TTSJob] = asyncio.Queue()
     bot.guild_state[1] = GuildState(
         voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
         text_channel_id=10,
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
@@ -94,3 +104,49 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
     await bot.on_message(msg)
     assert tts.enqueued
     assert q.qsize() == 1
+
+
+@pytest.mark.asyncio
+async def test_on_message_rejects_when_queue_full(monkeypatch):
+    class FakeTTS:
+        def __init__(self) -> None:
+            self.enqueued = []
+
+        def prompt_exists(self, user_id: int) -> bool:
+            return True
+
+        async def enqueue(self, guild_id: int, user_id: int, text: str):
+            self.enqueued.append((guild_id, user_id, text))
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            fut.set_result(b"wav")
+            return fut
+
+    monkeypatch.setattr(bot_mod, "GUILD_QUEUE_LIMIT", 1)
+    monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 1)
+
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    guild = FakeGuild(1)
+    channel = FakeChannel(10)
+    user = FakeUser(5)
+    msg = FakeMessage(guild=guild, channel=channel, author=user, clean_content="hi")
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    # Fill queue to limit
+    loop = asyncio.get_running_loop()
+    await q.put(TTSJob(tts_future=loop.create_future()))
+
+    await bot.on_message(msg)
+
+    assert not tts.enqueued
+    assert "❌" in msg.reactions

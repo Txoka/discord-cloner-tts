@@ -25,11 +25,11 @@
 - No formatter or linter is configured—keep changes minimal and consistent.
 
 ## Testing Guidelines
-- No automated test suite is present.
-- If adding tests, keep them under a new `tests/` directory and document how to run them.
+- Automated tests are present under `tests/`.
+- Use `make test` to run the suite via Docker Compose.
 
 ## Commit & Pull Request Guidelines
-- This directory does not include Git history, so no commit conventions are available.
+- This repository uses Git with a `main` branch.
 - Use clear, imperative commit messages (e.g., “Add voice normalization options”).
 - PRs should describe behavior changes, configuration updates, and any new dependencies.
 - Include usage notes if new environment variables are introduced.

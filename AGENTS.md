@@ -27,6 +27,7 @@
 ## Testing Guidelines
 - Automated tests are present under `tests/`.
 - Use `make test` to run the suite via Docker Compose.
+- Update or add tests for any functional change, and run the test suite before merging into `dev`.
 
 ## Commit & Pull Request Guidelines
 - This repository uses Git with a `main` branch.

@@ -20,9 +20,13 @@ MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
 LOG_LEVEL = os.environ.get("QWEN_TTS_LOG_LEVEL", "INFO")
 
 # Admins
-DISCORD_ADMIN_ENABLED = os.environ.get("DISCORD_ADMIN_ENABLED", "1").lower() not in {"0", "false", "no", "off"}
-DISCORD_SUPERADMIN_ID = os.environ.get("DISCORD_SUPERADMIN_ID", "")
-SUPERADMIN_IDS = [int(x) for x in (s.strip() for s in DISCORD_SUPERADMIN_ID.split(",")) if x]
+DISCORD_SUPERADMIN_IDS = os.environ.get("DISCORD_SUPERADMIN_IDS", "")
+if not DISCORD_SUPERADMIN_IDS:
+    DISCORD_SUPERADMIN_IDS = os.environ.get("DISCORD_SUPERADMIN_ID", "")
+SUPERADMIN_IDS = [int(x) for x in (s.strip() for s in DISCORD_SUPERADMIN_IDS.split(",")) if x]
+
+DISCORD_DEBUG_GUILD_IDS = os.environ.get("DISCORD_DEBUG_GUILD_IDS", "")
+DEBUG_GUILD_IDS = [int(x) for x in (s.strip() for s in DISCORD_DEBUG_GUILD_IDS.split(",")) if x]
 
 # Volume normalization (simple RMS normalization per utterance)
 NORM_MODE = os.environ.get("QWEN_TTS_NORM", "none")  # none|rms|peak

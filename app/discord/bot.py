@@ -20,7 +20,6 @@ from app.config import (
     CLONE_MIN_SECONDS,
     CLONE_RECORD_SECONDS,
     CLONE_SAMPLE_TEXT_ES,
-    DISCORD_ADMIN_ENABLED,
     GUILD_QUEUE_LIMIT,
     GLOBAL_QUEUE_LIMIT,
 )
@@ -124,29 +123,139 @@ class Bot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.tts = tts
         self.admin_store = admin_store
-        self.admin_enabled = bool(DISCORD_ADMIN_ENABLED)
+        self._debug_guilds: set[int] = set()
         self.guild_state: Dict[int, GuildState] = {}
 
         # Prevent concurrent enrollments per guild + suppress TTS for enrolling user
         self._clone_lock: Dict[int, asyncio.Lock] = {}
         self._cloning_users: set[int] = set()
-        self._disguises: Dict[int, int] = {}
-        if not self.admin_enabled:
-            self._disguises.clear()
+        self._disguises: Dict[int, Dict[int, int]] = {}
+        self._admin_commands: list[app_commands.Command] = []
+        self._register_admin_command_objects()
 
-    def _is_admin(self, user_id: int) -> bool:
-        if not self.admin_enabled:
+    def _register_admin_command_objects(self) -> None:
+        async def disguise(interaction: discord.Interaction, target: discord.Member):
+            await self._disguise(interaction, target)
+
+        disguise = app_commands.describe(target="User whose voice you want to use")(disguise)
+        disguise_cmd = app_commands.Command(
+            name="disguise",
+            description="Admins only: speak using someone else's voice.",
+            callback=disguise,
+        )
+
+        async def addadmin(
+            interaction: discord.Interaction,
+            target: discord.Member,
+            role: app_commands.Choice[str] | None = None,
+        ):
+            await self._add_admin(interaction, target, role.value if role else "admin")
+
+        addadmin = app_commands.describe(target="User to grant admin access")(addadmin)
+        addadmin = app_commands.describe(role="admin or superadmin")(addadmin)
+        addadmin = app_commands.choices(
+            role=[
+                app_commands.Choice(name="admin", value="admin"),
+                app_commands.Choice(name="superadmin", value="superadmin"),
+            ]
+        )(addadmin)
+        addadmin_cmd = app_commands.Command(
+            name="addadmin",
+            description="Admins only: add an admin or superadmin.",
+            callback=addadmin,
+        )
+
+        async def removeadmin(interaction: discord.Interaction, target: discord.Member):
+            await self._remove_admin(interaction, target)
+
+        removeadmin = app_commands.describe(target="User to remove from admins")(removeadmin)
+        removeadmin_cmd = app_commands.Command(
+            name="removeadmin",
+            description="Admins only: remove an admin or superadmin.",
+            callback=removeadmin,
+        )
+
+        async def adminlist(interaction: discord.Interaction):
+            await self._admin_list(interaction)
+
+        adminlist_cmd = app_commands.Command(
+            name="adminlist",
+            description="Admins only: list current admins and roles.",
+            callback=adminlist,
+        )
+
+        async def sync_cmd(interaction: discord.Interaction):
+            await self._sync_commands(interaction)
+
+        sync_cmd_obj = app_commands.Command(
+            name="sync",
+            description="Admins only: sync slash commands to this guild.",
+            callback=sync_cmd,
+        )
+
+        async def adddebugguild(interaction: discord.Interaction, guild_id: int):
+            await self._add_debug_guild(interaction, guild_id)
+
+        adddebugguild = app_commands.describe(guild_id="Guild ID to enable admin commands for")(adddebugguild)
+        adddebugguild_cmd = app_commands.Command(
+            name="adddebugguild",
+            description="Admins only: enable admin commands for a guild.",
+            callback=adddebugguild,
+        )
+
+        async def removedebugguild(interaction: discord.Interaction, guild_id: int):
+            await self._remove_debug_guild(interaction, guild_id)
+
+        removedebugguild = app_commands.describe(guild_id="Guild ID to disable admin commands for")(removedebugguild)
+        removedebugguild_cmd = app_commands.Command(
+            name="removedebugguild",
+            description="Admins only: disable admin commands for a guild.",
+            callback=removedebugguild,
+        )
+
+        self._admin_commands = [
+            disguise_cmd,
+            addadmin_cmd,
+            removeadmin_cmd,
+            adminlist_cmd,
+            sync_cmd_obj,
+            adddebugguild_cmd,
+            removedebugguild_cmd,
+        ]
+
+    def _register_admin_commands_for_guild(self, guild_id: int) -> None:
+        guild = discord.Object(id=int(guild_id))
+        for cmd in self._admin_commands:
+            try:
+                self.tree.add_command(cmd, guild=guild)
+            except Exception:
+                continue
+
+    def _unregister_admin_commands_for_guild(self, guild_id: int) -> None:
+        guild = discord.Object(id=int(guild_id))
+        for cmd in self._admin_commands:
+            self.tree.remove_command(cmd.name, guild=guild)
+
+    def _is_debug_guild(self, guild_id: int | None) -> bool:
+        return guild_id is not None and int(guild_id) in self._debug_guilds
+
+    def _is_admin(self, user_id: int, guild_id: int | None) -> bool:
+        if not self._is_debug_guild(guild_id):
             return False
         return self.admin_store.is_admin(int(user_id))
 
-    def _is_superadmin(self, user_id: int) -> bool:
-        if not self.admin_enabled:
+    def _is_superadmin(self, user_id: int, guild_id: int | None) -> bool:
+        if not self._is_debug_guild(guild_id):
             return False
         return self.admin_store.is_superadmin(int(user_id))
 
     async def setup_hook(self):
         LOG.info("Syncing application commands")
         await self.tree.sync()
+        self._debug_guilds = set(self.admin_store.list_debug_guilds())
+        for gid in self._debug_guilds:
+            self._register_admin_commands_for_guild(gid)
+            await self.tree.sync(guild=discord.Object(id=int(gid)))
 
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
@@ -533,17 +642,15 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if not self.admin_enabled:
-            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
-            return
-        if not self._is_admin(int(interaction.user.id)):
+        guild_id = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), guild_id):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
 
         target_id = int(target.id)
         caller_id = int(interaction.user.id)
         if target_id == caller_id:
-            self._disguises.pop(caller_id, None)
+            self._disguises.get(guild_id, {}).pop(caller_id, None)
             await interaction.response.send_message("Disguise cleared. Using your own voice.", ephemeral=True)
             return
 
@@ -554,7 +661,7 @@ class Bot(discord.Client):
             )
             return
 
-        self._disguises[caller_id] = target_id
+        self._disguises.setdefault(guild_id, {})[caller_id] = target_id
         await interaction.response.send_message(
             f"Disguise set. You will speak using {target.mention}'s voice.",
             ephemeral=True,
@@ -565,10 +672,11 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if not self.admin_enabled:
-            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+        guild_id = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), guild_id):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
             return
-        if not self._is_superadmin(int(interaction.user.id)):
+        if not self._is_superadmin(int(interaction.user.id), guild_id):
             await interaction.response.send_message("Superadmins only.", ephemeral=True)
             return
 
@@ -586,10 +694,11 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if not self.admin_enabled:
-            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+        guild_id = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), guild_id):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
             return
-        if not self._is_superadmin(int(interaction.user.id)):
+        if not self._is_superadmin(int(interaction.user.id), guild_id):
             await interaction.response.send_message("Superadmins only.", ephemeral=True)
             return
 
@@ -609,10 +718,8 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if not self.admin_enabled:
-            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
-            return
-        if not self._is_admin(int(interaction.user.id)):
+        guild_id = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), guild_id):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
 
@@ -626,23 +733,56 @@ class Bot(discord.Client):
         await interaction.response.send_message(out[:1900], ephemeral=True)
 
     async def _sync_commands(self, interaction: discord.Interaction) -> None:
-        if not self.admin_enabled:
-            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        if not self._is_admin(int(interaction.user.id)):
+        guild_id = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), guild_id):
             await interaction.response.send_message("Admins only.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
-        if not interaction.guild:
-            await interaction.followup.send("Guild-only command.", ephemeral=True)
-            return
-
         guild = discord.Object(id=int(interaction.guild.id))
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
         await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
         LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
+
+    async def _add_debug_guild(self, interaction: discord.Interaction, guild_id: int) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        current_gid = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), current_gid):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        target_gid = int(guild_id)
+        self.admin_store.add_debug_guild(target_gid)
+        self._debug_guilds.add(target_gid)
+        self._register_admin_commands_for_guild(target_gid)
+        await self.tree.sync(guild=discord.Object(id=target_gid))
+        await interaction.response.send_message(f"Enabled admin commands for guild_id={target_gid}.", ephemeral=True)
+        LOG.info("Added debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
+
+    async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: int) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        current_gid = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), current_gid):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        target_gid = int(guild_id)
+        removed = self.admin_store.remove_debug_guild(target_gid)
+        self._debug_guilds.discard(target_gid)
+        self._disguises.pop(target_gid, None)
+        self._unregister_admin_commands_for_guild(target_gid)
+        await self.tree.sync(guild=discord.Object(id=target_gid))
+        if removed:
+            await interaction.response.send_message(f"Disabled admin commands for guild_id={target_gid}.", ephemeral=True)
+            LOG.info("Removed debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
+        else:
+            await interaction.response.send_message("Guild was not enabled.", ephemeral=True)
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:
@@ -664,7 +804,9 @@ class Bot(discord.Client):
 
         # Resolve voice id (admin disguise)
         author_id = int(message.author.id)
-        voice_id = self._disguises.get(author_id, author_id)
+        voice_id = author_id
+        if self._is_debug_guild(int(message.guild.id)):
+            voice_id = self._disguises.get(int(message.guild.id), {}).get(author_id, author_id)
 
         # Only speak if target voice has an enrolled prompt file
         if not self.tts.prompt_exists(voice_id):

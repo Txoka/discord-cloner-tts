@@ -5,7 +5,6 @@ import logging
 import os
 
 import discord
-from discord import app_commands
 
 from app.config import (
     ADMIN_DB_PATH,
@@ -15,7 +14,7 @@ from app.config import (
     MAX_BATCH_SIZE,
     MODEL_ID,
     NORM_MODE,
-    DISCORD_ADMIN_ENABLED,
+    DEBUG_GUILD_IDS,
     SUPERADMIN_IDS,
     VOICES_DIR,
 )
@@ -39,9 +38,10 @@ def main() -> None:
 
     tts = TTSEngine(VOICES_DIR)
     tts.load_model()
-    admin_store = AdminStore(ADMIN_DB_PATH, SUPERADMIN_IDS)
+    admin_store = AdminStore(ADMIN_DB_PATH, SUPERADMIN_IDS, DEBUG_GUILD_IDS)
     admin_store.init_schema()
     admin_store.bootstrap_superadmins()
+    admin_store.bootstrap_debug_guilds()
     log.info(
         "Startup model=%s device=%s dtype=%s max_batch=%s norm_mode=%s voices_dir=%s",
         MODEL_ID,
@@ -75,41 +75,6 @@ def main() -> None:
     @bot.tree.command(name="forget", description="Forget your enrolled voice (delete prompt file).")
     async def forget(interaction: discord.Interaction):
         await bot._forget(interaction)
-
-    if DISCORD_ADMIN_ENABLED:
-        @bot.tree.command(name="disguise", description="Admins only: speak using someone else's voice.")
-        @discord.app_commands.describe(target="User whose voice you want to use")
-        async def disguise(interaction: discord.Interaction, target: discord.Member):
-            await bot._disguise(interaction, target)
-
-        @bot.tree.command(name="addadmin", description="Superadmins only: add an admin or superadmin.")
-        @discord.app_commands.describe(target="User to grant admin access")
-        @discord.app_commands.describe(role="admin or superadmin")
-        @app_commands.choices(
-            role=[
-                app_commands.Choice(name="admin", value="admin"),
-                app_commands.Choice(name="superadmin", value="superadmin"),
-            ]
-        )
-        async def addadmin(
-            interaction: discord.Interaction,
-            target: discord.Member,
-            role: app_commands.Choice[str] | None = None,
-        ):
-            await bot._add_admin(interaction, target, role.value if role else "admin")
-
-        @bot.tree.command(name="removeadmin", description="Superadmins only: remove an admin or superadmin.")
-        @discord.app_commands.describe(target="User to remove from admins")
-        async def removeadmin(interaction: discord.Interaction, target: discord.Member):
-            await bot._remove_admin(interaction, target)
-
-        @bot.tree.command(name="adminlist", description="Admins only: list current admins and roles.")
-        async def adminlist(interaction: discord.Interaction):
-            await bot._admin_list(interaction)
-
-    @bot.tree.command(name="sync", description="Owner only: sync slash commands.")
-    async def sync(interaction: discord.Interaction):
-        await bot._sync_commands(interaction)
 
     bot.run(token)
 

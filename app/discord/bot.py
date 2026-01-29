@@ -829,7 +829,7 @@ class Bot(discord.Client):
         await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
         LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
 
-    async def _add_debug_guild(self, interaction: discord.Interaction, guild_id: str) -> None:
+    async def _add_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
@@ -839,7 +839,7 @@ class Bot(discord.Client):
             return
         try:
             target_gid = int(guild_id)
-        except ValueError:
+        except (TypeError, ValueError):
             await interaction.response.send_message("Guild ID must be a number.", ephemeral=True)
             return
         self.admin_store.add_debug_guild(target_gid)
@@ -849,7 +849,7 @@ class Bot(discord.Client):
         await interaction.response.send_message(f"Enabled admin commands for guild_id={target_gid}.", ephemeral=True)
         LOG.info("Added debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
 
-    async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: str) -> None:
+    async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
@@ -859,7 +859,7 @@ class Bot(discord.Client):
             return
         try:
             target_gid = int(guild_id)
-        except ValueError:
+        except (TypeError, ValueError):
             await interaction.response.send_message("Guild ID must be a number.", ephemeral=True)
             return
         removed = self.admin_store.remove_debug_guild(target_gid)

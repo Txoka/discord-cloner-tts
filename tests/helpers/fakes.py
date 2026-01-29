@@ -69,9 +69,10 @@ class FakeVoiceClient:
 
 
 class FakeVoiceChannel:
-    def __init__(self, voice_client: FakeVoiceClient):
+    def __init__(self, voice_client: FakeVoiceClient, channel_id: int = 1):
         self._voice_client = voice_client
         self.name = "voice"
+        self.id = int(channel_id)
 
     async def connect(self, cls=None):
         return self._voice_client

@@ -44,6 +44,9 @@
 - Use `TODO.md` to track active work and update it as tasks are completed.
 - Update user-facing docs (e.g., `README.md`) whenever behavior or configuration changes.
 
+## Clarifications
+- If any requirement is ambiguous or uncertain, ask for clarification before coding or making assumptions.
+
 ## Security & Configuration Tips
 - Store secrets in `.env` (e.g., `DISCORD_TOKEN`) and avoid committing real tokens.
 - Model and runtime settings are controlled via `QWEN_TTS_*` env vars in `app/config.py`.

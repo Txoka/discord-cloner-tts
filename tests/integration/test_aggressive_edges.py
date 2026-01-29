@@ -169,6 +169,7 @@ async def test_join_leave_sequence_during_clone(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_player_handles_playback_error(monkeypatch):
     class ErrVoiceClient(FakeVoiceClient):
         def play(self, src: object, after=None) -> None:

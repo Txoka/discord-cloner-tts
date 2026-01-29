@@ -43,7 +43,7 @@ make logs
 - `/disguise @user` - Admins only: speak using someone else's voice.
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
 - `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
-- `/sync` - Owner only: sync slash commands.
+- `/sync` - Admins only: sync slash commands globally.
 
 ## Configuration
 Environment variables (set in `.env`):

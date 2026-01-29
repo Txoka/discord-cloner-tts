@@ -41,7 +41,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 
 ## Config (Environment)
 - `DISCORD_TOKEN`: bot token.
-- `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs (must include txoka).
+- `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs.
 - `DISCORD_DEBUG_GUILD_IDS`: comma-separated list of guild IDs that get admin commands.
 - `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
 - `QWEN_TTS_*`: model/runtime settings.

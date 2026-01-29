@@ -157,14 +157,18 @@ async def test_join_leave_sequence_during_clone(monkeypatch):
 
     lock = bot._clone_lock.setdefault(1, asyncio.Lock())
     await lock.acquire()
+    worker = None
     try:
         bot._cloning_channels[1] = 123
         await bot._join(interaction, channel)
+        worker = bot.guild_state.get(1).worker_task if bot.guild_state.get(1) else None
         await bot._join(interaction, other)
         await bot._leave(interaction)
         assert bot._clone_joined.get(1) is True
         assert interaction.response.messages
     finally:
+        if worker is not None:
+            await cancel_task(worker)
         lock.release()
 
 

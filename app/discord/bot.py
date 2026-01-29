@@ -5,7 +5,7 @@ import io
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -105,6 +105,10 @@ class SafeVoiceRecvClient(voice_recv.VoiceRecvClient):
 @dataclass
 class TTSJob:
     tts_future: "asyncio.Future[Optional[bytes]]"
+    trace: Dict[str, float] = field(default_factory=dict)
+    message_id: int = 0
+    author_id: int = 0
+    voice_id: int = 0
 
 
 @dataclass
@@ -240,6 +244,45 @@ class Bot(discord.Client):
             debugguildlist_cmd,
         ]
 
+    @staticmethod
+    def _trace_ms(trace: Dict[str, float], start: str, end: str) -> Optional[float]:
+        if start not in trace or end not in trace:
+            return None
+        return (trace[end] - trace[start]) * 1000.0
+
+    def _log_latency(self, guild_id: int, job: TTSJob, stage: str) -> None:
+        tr = job.trace
+        total_ms = self._trace_ms(tr, "msg_recv_ts", "playback_end_ts")
+        tts_queue_ms = self._trace_ms(tr, "tts_queue_enqueued_ts", "tts_queue_dequeued_ts")
+        tts_infer_ms = self._trace_ms(tr, "tts_infer_start_ts", "tts_infer_end_ts")
+        tts_wait_ms = self._trace_ms(tr, "tts_future_wait_start_ts", "tts_future_wait_end_ts")
+        guild_queue_ms = self._trace_ms(tr, "guild_queue_put_ts", "guild_queue_get_ts")
+        vc_wait_ms = self._trace_ms(tr, "vc_wait_start_ts", "vc_wait_end_ts")
+        pcm_ms = self._trace_ms(tr, "pcm_prep_start_ts", "pcm_prep_end_ts")
+        playback_ms = self._trace_ms(tr, "playback_start_ts", "playback_end_ts")
+        preproc_ms = self._trace_ms(tr, "msg_recv_ts", "preprocess_done_ts")
+        enqueue_ms = self._trace_ms(tr, "enqueue_call_ts", "enqueue_return_ts")
+        LOG.info(
+            "Latency stage=%s guild_id=%s message_id=%s author_id=%s voice_id=%s "
+            "total_ms=%.2f preproc_ms=%s enqueue_ms=%s tts_queue_ms=%s tts_wait_ms=%s "
+            "tts_infer_ms=%s guild_queue_ms=%s vc_wait_ms=%s pcm_ms=%s playback_ms=%s",
+            stage,
+            guild_id,
+            job.message_id,
+            job.author_id,
+            job.voice_id,
+            total_ms if total_ms is not None else -1.0,
+            f"{preproc_ms:.2f}" if preproc_ms is not None else "n/a",
+            f"{enqueue_ms:.2f}" if enqueue_ms is not None else "n/a",
+            f"{tts_queue_ms:.2f}" if tts_queue_ms is not None else "n/a",
+            f"{tts_wait_ms:.2f}" if tts_wait_ms is not None else "n/a",
+            f"{tts_infer_ms:.2f}" if tts_infer_ms is not None else "n/a",
+            f"{guild_queue_ms:.2f}" if guild_queue_ms is not None else "n/a",
+            f"{vc_wait_ms:.2f}" if vc_wait_ms is not None else "n/a",
+            f"{pcm_ms:.2f}" if pcm_ms is not None else "n/a",
+            f"{playback_ms:.2f}" if playback_ms is not None else "n/a",
+        )
+
     def _register_admin_commands_for_guild(self, guild_id: int) -> None:
         guild = discord.Object(id=int(guild_id))
         for cmd in self._admin_commands:
@@ -332,6 +375,7 @@ class Bot(discord.Client):
 
         while True:
             job = await st.queue.get()
+            job.trace["guild_queue_get_ts"] = time.monotonic()
             queue_after_get = st.queue.qsize()
             wav_bytes: Optional[bytes] = None
             try:
@@ -341,7 +385,10 @@ class Bot(discord.Client):
                     st = self.guild_state.get(guild_id, st)
                     vc = st.voice_client
                     if vc.is_connected():
+                        if "vc_wait_start_ts" in job.trace and "vc_wait_end_ts" not in job.trace:
+                            job.trace["vc_wait_end_ts"] = time.monotonic()
                         break
+                    job.trace.setdefault("vc_wait_start_ts", time.monotonic())
                     LOG.info("Voice client disconnected guild_id=%s; attempting reconnect", guild_id)
                     await self._ensure_voice_connected(guild_id)
                     await asyncio.sleep(1.0)
@@ -349,7 +396,9 @@ class Bot(discord.Client):
                 # Await the engine batch queue in-order for this guild
                 try:
                     wait_start = time.monotonic()
+                    job.trace["tts_future_wait_start_ts"] = wait_start
                     wav_bytes = await job.tts_future
+                    job.trace["tts_future_wait_end_ts"] = time.monotonic()
                     LOG.debug(
                         "TTS future resolved guild_id=%s wait_ms=%.2f",
                         guild_id,
@@ -359,14 +408,18 @@ class Bot(discord.Client):
                     raise
                 except Exception as exc:
                     LOG.warning("TTS error: %s", exc)
+                    self._log_latency(guild_id, job, "tts_error")
                     continue
                 if wav_bytes is None:
                     # Prompt missing (e.g., user forgot voice mid-queue). Skip.
                     LOG.debug("TTS returned empty guild_id=%s", guild_id)
+                    self._log_latency(guild_id, job, "tts_empty")
                     continue
 
                 prep_start = time.monotonic()
+                job.trace["pcm_prep_start_ts"] = prep_start
                 pcm_bytes, _sr, _ch = await asyncio.to_thread(prepare_tts_pcm, wav_bytes, 48000, True)
+                job.trace["pcm_prep_end_ts"] = time.monotonic()
                 LOG.debug(
                     "PCM prep guild_id=%s in_bytes=%d out_bytes=%d prep_ms=%.2f queue_after_get=%d",
                     guild_id,
@@ -377,6 +430,7 @@ class Bot(discord.Client):
                 )
                 if not pcm_bytes:
                     LOG.debug("PCM conversion returned empty guild_id=%s", guild_id)
+                    self._log_latency(guild_id, job, "pcm_empty")
                     continue
 
                 src_buf = io.BytesIO(pcm_bytes)
@@ -389,6 +443,7 @@ class Bot(discord.Client):
                         LOG.warning("Playback error: %s", err)
                     done.set()
 
+                job.trace["playback_start_ts"] = time.monotonic()
                 LOG.debug("Playback start guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
                 if vc.is_playing():
                     LOG.warning("Voice client already playing guild_id=%s; stopping stale audio", guild_id)
@@ -397,6 +452,7 @@ class Bot(discord.Client):
                     vc.play(src, after=after_play)
                 except discord.ClientException as exc:
                     LOG.warning("Playback start failed guild_id=%s err=%s", guild_id, exc)
+                    self._log_latency(guild_id, job, "playback_start_error")
                     continue
 
                 playback_timeout = 0.0
@@ -409,7 +465,9 @@ class Bot(discord.Client):
                 except asyncio.TimeoutError:
                     LOG.warning("Playback timeout guild_id=%s timeout=%.2f", guild_id, playback_timeout)
                     vc.stop()
+                    self._log_latency(guild_id, job, "playback_timeout")
                     continue
+                job.trace["playback_end_ts"] = time.monotonic()
                 duration_sec = 0.0
                 if _sr > 0 and _ch > 0:
                     duration_sec = len(pcm_bytes) / float(_sr * _ch * 2)
@@ -419,6 +477,7 @@ class Bot(discord.Client):
                     duration_sec,
                     st.queue.qsize(),
                 )
+                self._log_latency(guild_id, job, "ok")
 
             finally:
                 self._decrement_global_queue()
@@ -893,6 +952,7 @@ class Bot(discord.Client):
         if message.author.bot or not message.guild:
             return
 
+        trace: Dict[str, float] = {"msg_recv_ts": time.monotonic()}
         st = self.guild_state.get(int(message.guild.id))
         if not st:
             return
@@ -930,6 +990,7 @@ class Bot(discord.Client):
 
         # Avoid massive / empty messages
         text = preprocess_discord_text(message).strip()
+        trace["preprocess_done_ts"] = time.monotonic()
         if not text:
             return
 
@@ -950,8 +1011,22 @@ class Bot(discord.Client):
             return
 
         # Enqueue TTS in the engine, then queue playback in-order for this guild
-        tts_future = await self.tts.enqueue(int(message.guild.id), voice_id, text)
-        await st.queue.put(TTSJob(tts_future=tts_future))
+        trace["enqueue_call_ts"] = time.monotonic()
+        try:
+            tts_future = await self.tts.enqueue(int(message.guild.id), voice_id, text, trace=trace)
+        except TypeError:
+            tts_future = await self.tts.enqueue(int(message.guild.id), voice_id, text)
+        trace["enqueue_return_ts"] = time.monotonic()
+        trace["guild_queue_put_ts"] = time.monotonic()
+        await st.queue.put(
+            TTSJob(
+                tts_future=tts_future,
+                trace=trace,
+                message_id=int(getattr(message, "id", 0)),
+                author_id=author_id,
+                voice_id=voice_id,
+            )
+        )
         self._global_queue_size += 1
         qsize = st.queue.qsize()
         if qsize and qsize % 10 == 0:

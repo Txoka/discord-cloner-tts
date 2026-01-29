@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import time
 from collections import deque
 from pathlib import Path
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ class _TTSRequest:
     user_id: int
     text: str
     future: "asyncio.Future[Optional[bytes]]"
+    trace: Dict[str, float]
 
 
 class TTSEngine:
@@ -88,12 +90,21 @@ class TTSEngine:
                 LOG.info("Starting TTS queue worker")
                 self._worker_task = asyncio.create_task(self._queue_worker())
 
-    async def enqueue(self, guild_id: int, user_id: int, text: str) -> "asyncio.Future[Optional[bytes]]":
+    async def enqueue(
+        self,
+        guild_id: int,
+        user_id: int,
+        text: str,
+        trace: Optional[Dict[str, float]] = None,
+    ) -> "asyncio.Future[Optional[bytes]]":
         """Queue a TTS request and return a future that resolves to in-memory WAV bytes (or None)."""
         await self._ensure_worker()
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Optional[bytes]] = loop.create_future()
-        req = _TTSRequest(guild_id=int(guild_id), user_id=int(user_id), text=text, future=fut)
+        if trace is None:
+            trace = {}
+        trace["tts_queue_enqueued_ts"] = time.monotonic()
+        req = _TTSRequest(guild_id=int(guild_id), user_id=int(user_id), text=text, future=fut, trace=trace)
         async with self._queue_lock:
             q = self._guild_queues.setdefault(int(guild_id), deque())
             q.append(req)
@@ -122,6 +133,7 @@ class TTSEngine:
                     if not q:
                         continue
                     req = q.popleft()
+                    req.trace["tts_queue_dequeued_ts"] = time.monotonic()
                     self._pending_total -= 1
                     if q:
                         self._active_guilds.append(guild_id)
@@ -151,7 +163,13 @@ class TTSEngine:
 
             try:
                 # Keep your “don’t block loop” design.
+                tts_start = time.monotonic()
+                for r in active:
+                    r.trace["tts_infer_start_ts"] = tts_start
                 results = await asyncio.to_thread(self._process_batch, active)
+                tts_end = time.monotonic()
+                for r in active:
+                    r.trace["tts_infer_end_ts"] = tts_end
             except Exception as exc:
                 for r in active:
                     if not r.future.cancelled():

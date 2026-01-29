@@ -36,6 +36,9 @@ class FakeAdminStore:
     def remove_debug_guild(self, guild_id: int) -> bool:
         return True
 
+    def list_debug_guilds(self):
+        return [1, 2]
+
 
 def test_single_user_pcm_collector_ignores_other_user():
     collector = bot_mod.SingleUserPCMCollector(target_user_id=1)
@@ -226,3 +229,26 @@ async def test_admin_list(monkeypatch):
     await bot._admin_list(interaction)
     assert interaction.messages
     assert "superadmin" in interaction.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_debug_guild_list():
+    class FakeStore(FakeAdminStore):
+        def list_debug_guilds(self):
+            return [2, 5]
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 2})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    bot = Bot(tts=None, admin_store=FakeStore())  # type: ignore[arg-type]
+    bot._debug_guilds.add(2)
+    interaction = FakeInteraction()
+    await bot._debug_guild_list(interaction)
+    assert "2" in interaction.messages[0]

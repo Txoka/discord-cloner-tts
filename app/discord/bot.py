@@ -213,6 +213,15 @@ class Bot(discord.Client):
             callback=removedebugguild,
         )
 
+        async def debugguildlist(interaction: discord.Interaction):
+            await self._debug_guild_list(interaction)
+
+        debugguildlist_cmd = app_commands.Command(
+            name="debugguildlist",
+            description="Admins only: list guilds with admin commands enabled.",
+            callback=debugguildlist,
+        )
+
         self._admin_commands = [
             disguise_cmd,
             addadmin_cmd,
@@ -221,6 +230,7 @@ class Bot(discord.Client):
             sync_cmd_obj,
             adddebugguild_cmd,
             removedebugguild_cmd,
+            debugguildlist_cmd,
         ]
 
     def _register_admin_commands_for_guild(self, guild_id: int) -> None:
@@ -783,6 +793,22 @@ class Bot(discord.Client):
             LOG.info("Removed debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
         else:
             await interaction.response.send_message("Guild was not enabled.", ephemeral=True)
+
+    async def _debug_guild_list(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        current_gid = int(interaction.guild.id)
+        if not self._is_admin(int(interaction.user.id), current_gid):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        guilds = self.admin_store.list_debug_guilds()
+        if not guilds:
+            await interaction.response.send_message("No debug guilds configured.", ephemeral=True)
+            return
+        lines = [str(gid) for gid in guilds]
+        out = "Debug guilds:\n" + "\n".join(lines)
+        await interaction.response.send_message(out[:1900], ephemeral=True)
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:

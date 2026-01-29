@@ -46,6 +46,7 @@ make logs
 - `/adminlist` - Admins only: list all admins and their roles.
 - `/adddebugguild <guild_id>` - Admins only: enable admin commands for a guild.
 - `/removedebugguild <guild_id>` - Admins only: disable admin commands for a guild.
+- `/debugguildlist` - Admins only: list guilds with admin commands enabled.
 - `/sync` - Admins only: sync slash commands to the current guild.
 
 ## Configuration

@@ -18,12 +18,12 @@ class AdminStore:
         self._master_superadmins = {int(x) for x in master_superadmins}
 
     def _connect(self) -> sqlite3.Connection:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
     def init_schema(self) -> None:
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(
                 """

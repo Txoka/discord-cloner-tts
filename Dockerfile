@@ -29,7 +29,7 @@ ENV NUMBA_CACHE_DIR="/app/.numba_cache"
 
 RUN groupadd -g "${GROUP_ID}" appuser \
     && useradd -u "${USER_ID}" -g "${GROUP_ID}" -m -s /bin/bash appuser \
-    && mkdir -p /app/.numba_cache /app/model /app/voices \
+    && mkdir -p /app/.numba_cache /app/model /app/voices /app/data \
     && chown -R appuser:appuser /app
 
 USER appuser

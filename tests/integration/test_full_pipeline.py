@@ -56,6 +56,21 @@ class FakeAdminStore:
         return []
 
 
+class FakeTTS:
+    def __init__(self) -> None:
+        self.enqueued: list[tuple[int, int, str]] = []
+
+    def prompt_exists(self, user_id: int) -> bool:
+        return True
+
+    async def enqueue(self, guild_id: int, user_id: int, text: str):
+        self.enqueued.append((guild_id, user_id, text))
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        fut.set_result(b"wav")
+        return fut
+
+
 @pytest.mark.asyncio
 async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
     engine = TTSEngine(tmp_path)
@@ -202,3 +217,38 @@ async def test_add_remove_debug_guild(monkeypatch, tmp_path):
     assert 3 not in admin_store.list_debug_guilds()
     assert 3 not in bot._debug_guilds
     assert 3 not in bot._disguises
+
+
+@pytest.mark.asyncio
+async def test_full_pipeline_rejects_when_queues_full(monkeypatch, tmp_path):
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())
+
+    vc = FakeVoiceClient()
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=vc,
+        voice_channel_id=1,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    bot.guild_state[1].worker_task.cancel()
+
+    loop = asyncio.get_running_loop()
+    await q.put(TTSJob(tts_future=loop.create_future()))
+
+    monkeypatch.setattr(bot_mod, "GUILD_QUEUE_LIMIT", 1)
+    monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 1)
+
+    msg = FakeMessage(
+        guild=FakeGuild(1),
+        channel=FakeChannel(10),
+        author=FakeUser(5),
+        clean_content="hello",
+    )
+
+    await bot.on_message(msg)
+
+    assert not tts.enqueued
+    assert "❌" in msg.reactions

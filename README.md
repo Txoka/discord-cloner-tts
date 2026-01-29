@@ -44,7 +44,7 @@ make logs
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
 - `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
 - `/adminlist` - Admins only: list all admins and their roles.
-- `/sync` - Admins only: sync slash commands globally.
+- `/sync` - Admins only: sync slash commands to the current guild.
 
 ## Configuration
 Environment variables (set in `.env`):

@@ -634,9 +634,15 @@ class Bot(discord.Client):
             return
 
         await interaction.response.defer(ephemeral=True)
-        await self.tree.sync()
-        await interaction.followup.send("Synced commands globally.", ephemeral=True)
-        LOG.info("Manual global sync by user_id=%s", interaction.user.id)
+        if not interaction.guild:
+            await interaction.followup.send("Guild-only command.", ephemeral=True)
+            return
+
+        guild = discord.Object(id=int(interaction.guild.id))
+        self.tree.copy_global_to(guild=guild)
+        await self.tree.sync(guild=guild)
+        await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
+        LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
 
     async def on_message(self, message: discord.Message):
         if message.author.bot or not message.guild:

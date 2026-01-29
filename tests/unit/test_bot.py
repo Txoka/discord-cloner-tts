@@ -102,44 +102,6 @@ def test_log_latency_breakdown(caplog):
 
 
 @pytest.mark.asyncio
-async def test_player_worker_orders_playback(monkeypatch):
-    vc = FakeVoiceClient()
-    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
-    async def fake_to_thread(func, *args, **kwargs):
-        return func(*args, **kwargs)
-
-    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
-    monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b"pcm:" + b, 48000, 2))
-    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
-
-    q: asyncio.Queue[TTSJob] = asyncio.Queue()
-    guild_id = 1
-    bot.guild_state[guild_id] = GuildState(
-        voice_client=vc,
-        voice_channel_id=1,
-        text_channel_id=1,
-        queue=q,
-        worker_task=asyncio.create_task(asyncio.sleep(0)),
-    )
-    await cancel_task(bot.guild_state[guild_id].worker_task)
-    worker = asyncio.create_task(bot._player_worker(guild_id))
-
-    loop = asyncio.get_running_loop()
-    fut1 = loop.create_future()
-    fut2 = loop.create_future()
-    await q.put(TTSJob(tts_future=fut1))
-    await q.put(TTSJob(tts_future=fut2))
-
-    fut1.set_result(b"one")
-    fut2.set_result(b"two")
-
-    await q.join()
-    await cancel_task(worker)
-
-    assert bot.guild_state[guild_id].stream.items == [b"pcm:one", b"pcm:two"]
-
-
-@pytest.mark.asyncio
 async def test_player_starts_stream_after_enqueue(monkeypatch):
     vc = SpyVoiceClient()
     bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]

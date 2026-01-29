@@ -92,6 +92,7 @@ async def test_player_worker_orders_playback(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning")
 async def test_on_message_filters_and_enqueues(monkeypatch):
     class FakeTTS:
         def __init__(self) -> None:

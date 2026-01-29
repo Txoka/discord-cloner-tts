@@ -519,16 +519,20 @@ class Bot(discord.Client):
                     self._log_latency(guild_id, job, "pcm_empty")
                     continue
 
-                if not self._ensure_streaming(guild_id):
-                    self._log_latency(guild_id, job, "stream_start_error")
-                    continue
-                stream = st.stream
+                stream = self._ensure_stream(guild_id)
                 if stream is None:
                     LOG.warning("Stream missing guild_id=%s", guild_id)
                     self._log_latency(guild_id, job, "stream_missing")
                     continue
 
                 done = stream.enqueue(job, pcm_bytes, asyncio.get_running_loop())
+                if not vc.is_playing():
+                    try:
+                        vc.play(stream)
+                    except Exception as exc:
+                        LOG.warning("Stream play failed guild_id=%s err=%s", guild_id, exc)
+                        self._log_latency(guild_id, job, "stream_start_error")
+                        continue
                 LOG.debug("Playback enqueue guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
 
                 playback_timeout = 0.0
@@ -672,20 +676,13 @@ class Bot(discord.Client):
             st.stream.close()
         st.stream = None
 
-    def _ensure_streaming(self, guild_id: int) -> bool:
+    def _ensure_stream(self, guild_id: int) -> GuildPCMStream | None:
         st = self.guild_state.get(guild_id)
         if not st:
-            return False
-        vc = st.voice_client
+            return None
         if st.stream is None or getattr(st.stream, "_closed", False):
             st.stream = GuildPCMStream(guild_id)
-        if not vc.is_playing():
-            try:
-                vc.play(st.stream)
-            except Exception as exc:
-                LOG.warning("Stream play failed guild_id=%s err=%s", guild_id, exc)
-                return False
-        return True
+        return st.stream
 
     async def _set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         if not interaction.guild:

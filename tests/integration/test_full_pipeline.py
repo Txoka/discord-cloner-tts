@@ -74,7 +74,11 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
         return f"{code}".encode()
 
     monkeypatch.setattr(engine, "_write_wav", fake_write_wav)
-    monkeypatch.setattr(asyncio, "to_thread", lambda func, *args, **kwargs: func(*args, **kwargs))
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
     bot = Bot(tts=engine, admin_store=FakeAdminStore())
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
@@ -110,26 +114,27 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
         clean_content="g1-b",
     )
 
-    await bot.on_message(msg1)
-    await bot.on_message(msg2)
-    await bot.on_message(msg3)
+    try:
+        await bot.on_message(msg1)
+        await bot.on_message(msg2)
+        await bot.on_message(msg3)
 
-    await bot.guild_state[1].queue.join()
-    await bot.guild_state[2].queue.join()
+        await bot.guild_state[1].queue.join()
+        await bot.guild_state[2].queue.join()
 
-    assert bot.guild_state[1].voice_client.play_calls == [b"11", b"33"]
-    assert bot.guild_state[2].voice_client.play_calls == [b"22"]
+        assert bot.guild_state[1].voice_client.play_calls == [b"11", b"33"]
+        assert bot.guild_state[2].voice_client.play_calls == [b"22"]
 
-    calls = engine._model.calls
-    assert calls
-    texts, prompts = calls[0]
-    assert texts == ["g1-a", "g2-a", "g1-b"]
-    assert len(prompts) == len(texts)
-
-    for st in bot.guild_state.values():
-        st.worker_task.cancel()
-    if engine._worker_task:
-        engine._worker_task.cancel()
+        calls = engine._model.calls
+        assert calls
+        texts, prompts = calls[0]
+        assert texts == ["g1-a", "g2-a", "g1-b"]
+        assert len(prompts) == len(texts)
+    finally:
+        for st in bot.guild_state.values():
+            st.worker_task.cancel()
+        if engine._worker_task:
+            engine._worker_task.cancel()
 
 
 @pytest.mark.asyncio

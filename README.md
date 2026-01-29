@@ -97,6 +97,18 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Admin commands only exist in guilds listed in `DISCORD_DEBUG_GUILD_IDS` (and stored in the DB).
 - During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 
+## Troubleshooting
+- `ClientException: Already connected to a voice channel` on `/join` or `/clone`:
+  - Usually means Discord has an active voice connection while the bot is trying to `connect()` again.
+  - Workaround: run `/leave` then `/join` again, or wait a few seconds and retry.
+- `NotFound: Unknown interaction` on `/join`:
+  - The interaction token likely expired before the response was sent.
+  - Retry the command; if it keeps happening, the command handler may need to defer responses sooner.
+- `Mooncake not available` / `Datasystem not available` warnings:
+  - These are optional connectors; safe to ignore unless you use those integrations.
+- `WS payload has extra keys: {'seq': ...}` from `discord.ext.voice_recv`:
+  - Informational from the voice receive library; generally safe to ignore.
+
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.
 - `app/discord/` - Voice channel logic, recording, and playback queue.

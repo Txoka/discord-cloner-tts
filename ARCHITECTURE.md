@@ -18,6 +18,7 @@ This project runs a Discord bot that reads messages from a selected text channel
   - Sanitizes and normalizes Discord message text for TTS.
 - `app/tts/audio/utils.py`
   - Audio normalization, trimming, resampling, and PCM conversion.
+  - Energy-based VAD uses a median+MAD threshold with an absolute dB floor and a minimum voiced window.
 
 ## Data & State
 - Voice prompt files: `voices/<user_id>.pt`.

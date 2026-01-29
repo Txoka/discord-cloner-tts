@@ -76,3 +76,26 @@ def test_prepare_tts_pcm_invalid_bytes_returns_empty():
     assert out == b""
     assert sr == 0
     assert ch == 0
+
+
+def test_trim_silence_energy_from_file():
+    from pathlib import Path
+    import soundfile as sf
+    import pytest
+
+    wav_path = Path(__file__).resolve().parents[1] / "assets" / "vad_sample.wav"
+    if not wav_path.exists():
+        pytest.skip("vad_sample.wav not provided yet")
+
+    data, sr = sf.read(str(wav_path), dtype="float32", always_2d=False)
+    mono = audio.to_mono_float32(data)
+    trimmed = audio.trim_silence_energy(mono, int(sr))
+
+    # TODO: Update expected crop window once you provide the file.
+    expected_start_ms = 0
+    expected_end_ms = 0
+    tolerance_ms = 50
+
+    expected_len = int(round((expected_end_ms - expected_start_ms) * int(sr) / 1000.0))
+    tol = int(round(tolerance_ms * int(sr) / 1000.0))
+    assert abs(trimmed.size - expected_len) <= tol

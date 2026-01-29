@@ -7,6 +7,8 @@ import discord
 
 from app.config import MAX_CHARS_PER_MESSAGE
 
+LOG = logging.getLogger("qwen-discord-tts")
+
 _URL_RE = re.compile(
     r"""(?xi)
 \bhttps?://[^\s<>()]+
@@ -102,4 +104,3 @@ def preprocess_discord_text(message: discord.Message, max_chars: int = MAX_CHARS
         LOG.debug("Trimmed message id=%s to %d chars", getattr(message, "id", None), max_chars)
 
     return text
-LOG = logging.getLogger("qwen-discord-tts")

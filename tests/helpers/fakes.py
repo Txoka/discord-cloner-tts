@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import io
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -108,7 +107,6 @@ class FakeInteraction:
         self.followup = FakeInteractionFollowup()
 
 
-@dataclass
 class FakeMessage:
     guild: Any
     channel: Any

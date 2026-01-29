@@ -83,6 +83,10 @@ async def test_player_worker_orders_playback(monkeypatch):
 
     await q.join()
     worker.cancel()
+    try:
+        await worker
+    except asyncio.CancelledError:
+        pass
 
     assert vc.play_calls == [b"pcm:one", b"pcm:two"]
 

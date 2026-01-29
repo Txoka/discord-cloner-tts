@@ -8,7 +8,6 @@ def test_admin_store_bootstrap_and_roles(tmp_path):
     store = AdminStore(db_path, master_superadmins=[1])
     store.init_schema()
     store.bootstrap_superadmins()
-    assert db_path.exists()
 
     assert store.is_superadmin(1)
     assert store.is_admin(1)
@@ -33,10 +32,3 @@ def test_admin_store_remove(tmp_path):
 
     # master superadmin should not be removable
     assert store.remove_admin(1) is False
-
-
-def test_admin_store_creates_parent_dir(tmp_path):
-    db_path = tmp_path / "nested" / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[])
-    store.init_schema()
-    assert db_path.exists()

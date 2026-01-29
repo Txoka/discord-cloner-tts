@@ -89,7 +89,6 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Admin roles are stored in a SQLite database under `./data`.
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
 - Messages are rejected with a ❌ reaction when queue limits are exceeded.
-- `make build`/`make up` will create `./data` for the admin DB.
 
 ## Repo layout
 - `app/main.py` - Entry point, command wiring.

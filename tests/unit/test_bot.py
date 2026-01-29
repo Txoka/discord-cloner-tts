@@ -7,7 +7,7 @@ import app.discord.bot as bot_mod
 from app.discord.admin_store import AdminRecord
 from app.discord.bot import Bot, GuildState, TTSJob
 from tests.helpers.asyncio_utils import cancel_task
-from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
+from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient, SpyVoiceClient
 
 
 class FakePCMAudio:
@@ -137,6 +137,42 @@ async def test_player_worker_orders_playback(monkeypatch):
     await cancel_task(worker)
 
     assert bot.guild_state[guild_id].stream.items == [b"pcm:one", b"pcm:two"]
+
+
+@pytest.mark.asyncio
+async def test_player_starts_stream_after_enqueue(monkeypatch):
+    vc = SpyVoiceClient()
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b"pcm:" + b, 48000, 2))
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    guild_id = 1
+    bot.guild_state[guild_id] = GuildState(
+        voice_client=vc,
+        voice_channel_id=1,
+        text_channel_id=1,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[guild_id].worker_task)
+    worker = asyncio.create_task(bot._player_worker(guild_id))
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await q.put(TTSJob(tts_future=fut))
+    fut.set_result(b"one")
+
+    await q.join()
+    await cancel_task(worker)
+
+    assert vc.play_sources
+    stream = vc.play_sources[0]
+    assert getattr(stream, "_closed", True) is False
 
 
 @pytest.mark.asyncio

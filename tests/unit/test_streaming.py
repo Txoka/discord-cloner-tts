@@ -47,3 +47,19 @@ def test_stream_consumes_and_closes(monkeypatch):
 
     asyncio.set_event_loop(None)
     loop.close()
+
+
+def test_stream_read_after_enqueue_sets_start_ts():
+    class Job:
+        trace = {}
+
+    job = Job()
+    stream = REAL_STREAM(guild_id=1)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    stream.enqueue(job, b"\x02" * 10, loop=loop)
+    _ = stream.read()
+    assert job.trace.get("playback_start_ts") is not None
+    asyncio.set_event_loop(None)
+    loop.close()

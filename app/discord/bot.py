@@ -129,6 +129,8 @@ class Bot(discord.Client):
         # Prevent concurrent enrollments per guild + suppress TTS for enrolling user
         self._clone_lock: Dict[int, asyncio.Lock] = {}
         self._cloning_users: set[int] = set()
+        self._cloning_channels: Dict[int, int] = {}
+        self._clone_joined: Dict[int, bool] = {}
         self._disguises: Dict[int, Dict[int, int]] = {}
         self._admin_commands: list[app_commands.Command] = []
         self._register_admin_command_objects()
@@ -376,6 +378,16 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
+        guild_id = int(interaction.guild_id)
+        lock = self._clone_lock.get(guild_id)
+        if lock and lock.locked():
+            target_channel_id = self._cloning_channels.get(guild_id)
+            if channel is not None and target_channel_id is not None and int(channel.id) != target_channel_id:
+                await interaction.response.send_message(
+                    "I'm currently cloning in another channel. Try again when cloning finishes.",
+                    ephemeral=True,
+                )
+                return
 
         if channel is None:
             member = interaction.user
@@ -396,8 +408,6 @@ class Bot(discord.Client):
             vc = await channel.connect(cls=SafeVoiceRecvClient)
 
         q: asyncio.Queue[TTSJob] = asyncio.Queue()
-        guild_id = int(interaction.guild_id)
-
         # Replace existing state cleanly
         old = self.guild_state.get(guild_id)
         if old:
@@ -424,6 +434,8 @@ class Bot(discord.Client):
         )
         self.guild_state[guild_id].worker_task.cancel()  # cancel placeholder
         self.guild_state[guild_id].worker_task = asyncio.create_task(self._player_worker(guild_id))
+        if self._cloning_channels.get(guild_id) == int(channel.id):
+            self._clone_joined[guild_id] = True
 
         await interaction.response.send_message(
             f"Joined **{channel.name}**. I will speak messages from <#{interaction.channel_id}>.",
@@ -435,7 +447,12 @@ class Bot(discord.Client):
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
             return
-        st = self.guild_state.get(int(interaction.guild_id))
+        guild_id = int(interaction.guild_id)
+        lock = self._clone_lock.get(guild_id)
+        if lock and lock.locked():
+            await interaction.response.send_message("Can't leave while cloning is in progress.", ephemeral=True)
+            return
+        st = self.guild_state.get(guild_id)
         if not st:
             await interaction.response.send_message("I'm not connected.", ephemeral=True)
             return
@@ -511,8 +528,15 @@ class Bot(discord.Client):
         LOG.info("Clone started guild_id=%s user_id=%s", interaction.guild_id, interaction.user.id)
 
         async with lock:
-            # Ensure bot is connected with VoiceRecvClient
+            channel_id = int(member.voice.channel.id)
+            self._cloning_channels[guild_id] = channel_id
+            self._clone_joined.pop(guild_id, None)
+
             st = self.guild_state.get(guild_id)
+            preexisting_connected = False
+            if st and st.voice_client.is_connected() and int(st.voice_channel_id) == channel_id:
+                preexisting_connected = True
+            # Ensure bot is connected with VoiceRecvClient
             if not st or not st.voice_client.is_connected():
                 # connect and create state
                 vc = await member.voice.channel.connect(cls=SafeVoiceRecvClient)
@@ -624,6 +648,24 @@ class Bot(discord.Client):
 
             finally:
                 self._cloning_users.discard(int(member.id))
+                self._cloning_channels.pop(guild_id, None)
+                if not preexisting_connected and not self._clone_joined.get(guild_id, False):
+                    st = self.guild_state.get(guild_id)
+                    if st:
+                        try:
+                            st.worker_task.cancel()
+                        except Exception:
+                            pass
+                        while True:
+                            try:
+                                job = st.queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                break
+                            job.tts_future.cancel()
+                            st.queue.task_done()
+                        await st.voice_client.disconnect(force=True)
+                        self.guild_state.pop(guild_id, None)
+                        LOG.info("Left voice after clone guild_id=%s", interaction.guild_id)
                 LOG.info("Clone finished guild_id=%s user_id=%s", interaction.guild_id, member.id)
 
     async def _forget(self, interaction: discord.Interaction) -> None:

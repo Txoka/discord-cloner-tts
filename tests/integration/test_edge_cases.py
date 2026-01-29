@@ -134,12 +134,15 @@ async def test_clone_allows_parallel_guilds(tmp_path, monkeypatch):
 
     assert tts.prompt_path(member1.id).exists()
     assert tts.prompt_path(member2.id).exists()
+    tasks = []
     for st in bot.guild_state.values():
         try:
             st.worker_task.cancel()
+            tasks.append(st.worker_task)
         except Exception:
             pass
-    await asyncio.sleep(0)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -195,6 +198,6 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
 
     await q.join()
     worker.cancel()
-    await asyncio.sleep(0)
+    await asyncio.gather(worker, return_exceptions=True)
 
     assert vc.play_calls == []

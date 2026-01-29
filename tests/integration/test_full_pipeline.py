@@ -146,11 +146,15 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
         assert texts == ["g1-a", "g2-a", "g1-b"]
         assert len(prompts) == len(texts)
     finally:
+        tasks = []
         for st in bot.guild_state.values():
             st.worker_task.cancel()
+            tasks.append(st.worker_task)
         if engine._worker_task:
             engine._worker_task.cancel()
-        await asyncio.sleep(0)
+            tasks.append(engine._worker_task)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -235,7 +239,7 @@ async def test_full_pipeline_rejects_when_queues_full(monkeypatch, tmp_path):
         worker_task=asyncio.create_task(asyncio.sleep(0)),
     )
     bot.guild_state[1].worker_task.cancel()
-    await asyncio.sleep(0)
+    await asyncio.gather(bot.guild_state[1].worker_task, return_exceptions=True)
 
     loop = asyncio.get_running_loop()
     await q.put(TTSJob(tts_future=loop.create_future()))

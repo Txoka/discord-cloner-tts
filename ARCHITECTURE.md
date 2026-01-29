@@ -38,6 +38,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 - Queue limits are enforced at ingest (global + per-guild); rejected messages get a ❌ reaction.
 - Admin roles are stored in SQLite with two levels: admin and superadmin (master superadmins from env).
 - Admin commands are only registered in debug guilds; other guilds have no admin behavior.
+- While cloning, `/leave` is blocked and `/join` is restricted to the cloning channel; the bot disconnects after clone unless already joined (or joined during cloning).
 
 ## Config (Environment)
 - `DISCORD_TOKEN`: bot token.

@@ -134,6 +134,11 @@ async def test_clone_allows_parallel_guilds(tmp_path, monkeypatch):
 
     assert tts.prompt_path(member1.id).exists()
     assert tts.prompt_path(member2.id).exists()
+    for st in bot.guild_state.values():
+        try:
+            st.worker_task.cancel()
+        except Exception:
+            pass
 
 
 @pytest.mark.asyncio

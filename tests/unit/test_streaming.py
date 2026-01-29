@@ -9,7 +9,6 @@ REAL_STREAM = bot_mod.GuildPCMStream
 
 
 def test_stream_ends_when_empty(monkeypatch):
-    monkeypatch.setattr(bot_mod, "GuildPCMStream", REAL_STREAM)
     stream = REAL_STREAM(guild_id=1)
 
     out = stream.read()
@@ -18,7 +17,6 @@ def test_stream_ends_when_empty(monkeypatch):
 
 
 def test_stream_consumes_and_closes(monkeypatch):
-    monkeypatch.setattr(bot_mod, "GuildPCMStream", REAL_STREAM)
     stream = REAL_STREAM(guild_id=1)
 
     class Job:
@@ -27,7 +25,16 @@ def test_stream_consumes_and_closes(monkeypatch):
     job = Job()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    stream.enqueue(job, b"\x01" * 100, loop=loop)
+    class DummyEvent:
+        def __init__(self) -> None:
+            self.set_called = False
+
+        def set(self) -> None:
+            self.set_called = True
+
+    done = DummyEvent()
+    item = bot_mod._StreamItem(data=b"\x01" * 100, job=job, done_event=done, loop=loop)
+    stream._current = item
 
     frame = stream.read()
     assert len(frame) == bot_mod.PCM_FRAME_BYTES

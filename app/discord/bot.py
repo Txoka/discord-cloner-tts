@@ -936,6 +936,10 @@ class Bot(discord.Client):
         # Enforce queue limits (global + per-guild)
         guild_qsize = st.queue.qsize()
         global_qsize = self._global_queue_size
+        if GLOBAL_QUEUE_LIMIT > 0 and global_qsize == 0:
+            # Safety net for tests or external queue manipulation.
+            global_qsize = sum(s.queue.qsize() for s in self.guild_state.values())
+            self._global_queue_size = global_qsize
         if (GUILD_QUEUE_LIMIT > 0 and guild_qsize >= GUILD_QUEUE_LIMIT) or (
             GLOBAL_QUEUE_LIMIT > 0 and global_qsize >= GLOBAL_QUEUE_LIMIT
         ):

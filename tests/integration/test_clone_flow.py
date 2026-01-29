@@ -57,6 +57,9 @@ class FakeAdminStore:
     def is_superadmin(self, user_id: int) -> bool:
         return True
 
+    def list_debug_guilds(self):
+        return [1]
+
 
 @pytest.mark.asyncio
 async def test_clone_creates_prompt_file(monkeypatch, tmp_path):

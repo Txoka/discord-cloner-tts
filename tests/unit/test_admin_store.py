@@ -5,7 +5,7 @@ from app.discord.admin_store import AdminStore
 
 def test_admin_store_bootstrap_and_roles(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[1])
+    store = AdminStore(db_path, master_superadmins=[1], debug_guild_ids=[])
     store.init_schema()
     store.bootstrap_superadmins()
 
@@ -24,7 +24,7 @@ def test_admin_store_bootstrap_and_roles(tmp_path):
 
 def test_admin_store_remove(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[1])
+    store = AdminStore(db_path, master_superadmins=[1], debug_guild_ids=[])
     store.init_schema()
     store.bootstrap_superadmins()
 
@@ -38,7 +38,7 @@ def test_admin_store_remove(tmp_path):
 
 def test_admin_store_migrates_legacy_table(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[])
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
     store.init_schema()
     with store._connect() as conn:
         conn.execute("INSERT INTO admins (user_id, role) VALUES (?, ?)", (7, "admin"))
@@ -49,7 +49,7 @@ def test_admin_store_migrates_legacy_table(tmp_path):
 
 def test_admin_store_list_admins(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[])
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
     store.init_schema()
     store.add_role(2, "admin")
     store.add_role(1, "superadmin")
@@ -57,9 +57,21 @@ def test_admin_store_list_admins(tmp_path):
     assert [(r.user_id, r.role) for r in out] == [(1, "superadmin"), (2, "admin")]
 
 
+def test_admin_store_debug_guilds(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[3, 2])
+    store.init_schema()
+    store.bootstrap_debug_guilds()
+    assert store.list_debug_guilds() == [2, 3]
+    store.add_debug_guild(4)
+    assert store.list_debug_guilds() == [2, 3, 4]
+    assert store.remove_debug_guild(3) is True
+    assert store.list_debug_guilds() == [2, 4]
+
+
 def test_admin_store_migrates_legacy_table(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
-    store = AdminStore(db_path, master_superadmins=[])
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
     store.init_schema()
     with store._connect() as conn:
         conn.execute("INSERT INTO admins (user_id, role) VALUES (?, ?)", (7, "admin"))

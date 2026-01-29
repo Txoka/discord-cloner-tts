@@ -21,6 +21,9 @@ class FakeAdminStore:
     def is_superadmin(self, user_id: int) -> bool:
         return True
 
+    def list_debug_guilds(self):
+        return [1, 2]
+
 
 @pytest.mark.asyncio
 async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):

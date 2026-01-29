@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 import app.discord.bot as bot_mod
+from app.discord.admin_store import AdminRecord
 from app.discord.bot import Bot, GuildState, TTSJob
 from tests.helpers.fakes import FakeChannel, FakeGuild, FakeMessage, FakeUser, FakeVoiceClient
 
@@ -25,6 +26,15 @@ class FakeAdminStore:
 
     def list_admins(self):
         return []
+
+    def list_debug_guilds(self):
+        return []
+
+    def add_debug_guild(self, guild_id: int) -> None:
+        return None
+
+    def remove_debug_guild(self, guild_id: int) -> bool:
+        return True
 
 
 def test_single_user_pcm_collector_ignores_other_user():
@@ -91,7 +101,6 @@ async def test_on_message_filters_and_enqueues(monkeypatch):
             return fut
 
     tts = FakeTTS()
-    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -133,7 +142,6 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
     monkeypatch.setattr(bot_mod, "GLOBAL_QUEUE_LIMIT", 1)
 
     tts = FakeTTS()
-    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -173,10 +181,9 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
             self.last = (guild_id, user_id, text)
             return fut
 
-    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", False)
     tts = FakeTTS()
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
-    bot._disguises[5] = 99
+    bot._disguises.setdefault(1, {})[5] = 99
 
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -201,11 +208,11 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 async def test_admin_list(monkeypatch):
     class FakeStore(FakeAdminStore):
         def list_admins(self):
-            return [bot_mod.AdminRecord(user_id=1, role="superadmin")]
+            return [AdminRecord(user_id=1, role="superadmin")]
 
     class FakeInteraction:
         def __init__(self):
-            self.guild = object()
+            self.guild = type("Guild", (), {"id": 1})()
             self.user = FakeUser(1)
             self.response = type("Resp", (), {"send_message": self._send})()
             self.messages = []
@@ -213,8 +220,8 @@ async def test_admin_list(monkeypatch):
         async def _send(self, content: str, ephemeral: bool = True):
             self.messages.append(content)
 
-    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
     bot = Bot(tts=None, admin_store=FakeStore())  # type: ignore[arg-type]
+    bot._debug_guilds.add(1)
     interaction = FakeInteraction()
     await bot._admin_list(interaction)
     assert interaction.messages

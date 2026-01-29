@@ -146,14 +146,7 @@ class Bot(discord.Client):
 
     async def setup_hook(self):
         LOG.info("Syncing application commands")
-        guild_id = os.environ.get("DISCORD_SYNC_GUILD_ID")
-        if guild_id:
-            guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            LOG.info("Synced commands to guild_id=%s", guild_id)
-        else:
-            await self.tree.sync()
+        await self.tree.sync()
 
     async def on_ready(self):
         LOG.info("Logged in as %s (%s)", self.user, self.user.id)
@@ -613,29 +606,14 @@ class Bot(discord.Client):
         )
 
     async def _sync_commands(self, interaction: discord.Interaction) -> None:
-        if int(interaction.user.id) != 441597233150951425:
-            await interaction.response.send_message("Only txoka can sync commands.", ephemeral=True)
+        if not self.admin_enabled:
+            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+            return
+        if not self._is_admin(int(interaction.user.id)):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
-
-        guild_id_env = os.environ.get("DISCORD_SYNC_GUILD_ID")
-        if guild_id_env:
-            guild = discord.Object(id=int(guild_id_env))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            await interaction.followup.send(f"Synced commands to guild_id={guild_id_env}.", ephemeral=True)
-            LOG.info("Manual sync to guild_id=%s by user_id=%s", guild_id_env, interaction.user.id)
-            return
-
-        if interaction.guild:
-            guild = discord.Object(id=int(interaction.guild.id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            await interaction.followup.send("Synced commands to this guild.", ephemeral=True)
-            LOG.info("Manual sync to guild_id=%s by user_id=%s", interaction.guild.id, interaction.user.id)
-            return
-
         await self.tree.sync()
         await interaction.followup.send("Synced commands globally.", ephemeral=True)
         LOG.info("Manual global sync by user_id=%s", interaction.user.id)

@@ -32,12 +32,22 @@
 ## Commit & Pull Request Guidelines
 - This repository uses Git with a `main` branch.
 - Make incremental commits while working; avoid large monolithic commits.
+- Commit frequently within each feature branch using clear, meaningful messages.
 - Create a feature branch before significant changes and merge it into `dev`.
 - Only the repository owner merges `dev` into `main`.
 - If merge conflicts arise, resolve them unless they involve user-owned changes; when uncertain, ask first.
 - Use clear, imperative commit messages (e.g., “Add voice normalization options”).
 - PRs should describe behavior changes, configuration updates, and any new dependencies.
 - Include usage notes if new environment variables are introduced.
+
+## Required Workflow for New Features/Fixes
+For any new feature or fix, always follow this sequence:
+1. Create and switch to a new feature branch before making changes.
+2. Implement the change.
+3. Update or add tests as needed.
+4. Run the test suite and iterate until all tests pass.
+5. Update documentation after tests pass.
+6. Merge the feature branch into `dev`.
 
 ## Documentation & Planning
 - Read and keep `ARCHITECTURE.md` current when behavior or structure changes.

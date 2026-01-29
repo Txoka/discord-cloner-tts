@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 import os
+import queue
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +29,87 @@ from app.tts.engine import TTSEngine
 from app.tts.text import preprocess_discord_text
 
 LOG = logging.getLogger("qwen-discord-tts")
+
+PCM_FRAME_BYTES = 3840  # 20ms @ 48kHz, stereo, 16-bit
+
+
+@dataclass
+class _StreamItem:
+    data: bytes
+    job: "TTSJob"
+    done_event: asyncio.Event
+    loop: asyncio.AbstractEventLoop
+    offset: int = 0
+    started: bool = False
+
+
+class GuildPCMStream(discord.AudioSource):
+    def __init__(self, guild_id: int):
+        self.guild_id = int(guild_id)
+        self._queue: queue.Queue[_StreamItem] = queue.Queue()
+        self._current: _StreamItem | None = None
+        self._closed = False
+
+    def is_opus(self) -> bool:
+        return False
+
+    def close(self) -> None:
+        self._closed = True
+
+    def enqueue(self, job: "TTSJob", pcm_bytes: bytes, loop: asyncio.AbstractEventLoop) -> asyncio.Event:
+        done_event = asyncio.Event()
+        item = _StreamItem(data=pcm_bytes, job=job, done_event=done_event, loop=loop)
+        self._queue.put(item)
+        return done_event
+
+    def read(self) -> bytes:
+        if self._closed:
+            return b""
+
+        frame = bytearray()
+        while len(frame) < PCM_FRAME_BYTES:
+            if self._current is None:
+                try:
+                    self._current = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            item = self._current
+            if item is None:
+                break
+
+            if not item.started:
+                item.started = True
+                item.job.trace.setdefault("playback_start_ts", time.monotonic())
+
+            remaining = len(item.data) - item.offset
+            if remaining <= 0:
+                self._finish_item(item)
+                self._current = None
+                continue
+
+            need = PCM_FRAME_BYTES - len(frame)
+            take = min(remaining, need)
+            frame.extend(item.data[item.offset : item.offset + take])
+            item.offset += take
+
+            if item.offset >= len(item.data):
+                self._finish_item(item)
+                self._current = None
+
+        if len(frame) < PCM_FRAME_BYTES:
+            frame.extend(b"\x00" * (PCM_FRAME_BYTES - len(frame)))
+        return bytes(frame)
+
+    def _finish_item(self, item: _StreamItem) -> None:
+        item.job.trace.setdefault("playback_end_ts", time.monotonic())
+        item.loop.call_soon_threadsafe(item.done_event.set)
+
+    def drain_for_tests(self, max_frames: int = 5000) -> None:
+        for _ in range(max_frames):
+            if self._current is None and self._queue.empty():
+                break
+            self.read()
 
 
 # -----------------------------
@@ -118,6 +199,7 @@ class GuildState:
     text_channel_id: int
     queue: "asyncio.Queue[TTSJob]"
     worker_task: asyncio.Task | None
+    stream: GuildPCMStream | None = None
 
 
 class Bot(discord.Client):
@@ -349,6 +431,7 @@ class Bot(discord.Client):
             text_channel_id=text_channel_id,
             queue=q,
             worker_task=None,
+            stream=None,
         )
         self.guild_state[guild_id] = st
         st.worker_task = asyncio.create_task(self._player_worker(guild_id))
@@ -433,27 +516,17 @@ class Bot(discord.Client):
                     self._log_latency(guild_id, job, "pcm_empty")
                     continue
 
-                src_buf = io.BytesIO(pcm_bytes)
-                src = discord.PCMAudio(src_buf)
-
-                done = asyncio.Event()
-
-                def after_play(err: Optional[Exception]) -> None:
-                    if err:
-                        LOG.warning("Playback error: %s", err)
-                    done.set()
-
-                job.trace["playback_start_ts"] = time.monotonic()
-                LOG.debug("Playback start guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
-                if vc.is_playing():
-                    LOG.warning("Voice client already playing guild_id=%s; stopping stale audio", guild_id)
-                    vc.stop()
-                try:
-                    vc.play(src, after=after_play)
-                except discord.ClientException as exc:
-                    LOG.warning("Playback start failed guild_id=%s err=%s", guild_id, exc)
-                    self._log_latency(guild_id, job, "playback_start_error")
+                if not self._ensure_streaming(guild_id):
+                    self._log_latency(guild_id, job, "stream_start_error")
                     continue
+                stream = st.stream
+                if stream is None:
+                    LOG.warning("Stream missing guild_id=%s", guild_id)
+                    self._log_latency(guild_id, job, "stream_missing")
+                    continue
+
+                done = stream.enqueue(job, pcm_bytes, asyncio.get_running_loop())
+                LOG.debug("Playback enqueue guild_id=%s bytes=%d", guild_id, len(pcm_bytes))
 
                 playback_timeout = 0.0
                 if _sr > 0 and _ch > 0:
@@ -464,10 +537,8 @@ class Bot(discord.Client):
                     await asyncio.wait_for(done.wait(), timeout=playback_timeout)
                 except asyncio.TimeoutError:
                     LOG.warning("Playback timeout guild_id=%s timeout=%.2f", guild_id, playback_timeout)
-                    vc.stop()
                     self._log_latency(guild_id, job, "playback_timeout")
                     continue
-                job.trace["playback_end_ts"] = time.monotonic()
                 duration_sec = 0.0
                 if _sr > 0 and _ch > 0:
                     duration_sec = len(pcm_bytes) / float(_sr * _ch * 2)
@@ -533,6 +604,8 @@ class Bot(discord.Client):
             await self._cancel_task(old.worker_task, name="join-replace-worker")
             drained = self._drain_queue(old.queue)
             self._decrement_global_queue(drained)
+            if old.stream:
+                old.stream.close()
 
         self._create_guild_state(
             guild_id=guild_id,
@@ -566,6 +639,8 @@ class Bot(discord.Client):
         await self._cancel_task(st.worker_task, name="leave-worker")
         drained = self._drain_queue(st.queue)
         self._decrement_global_queue(drained)
+        if st.stream:
+            st.stream.close()
         await st.voice_client.disconnect(force=True)
         self.guild_state.pop(int(interaction.guild_id), None)
         await interaction.response.send_message("Left voice chat.", ephemeral=True)
@@ -590,6 +665,24 @@ class Bot(discord.Client):
             LOG.warning("Reconnect failed guild_id=%s channel_id=%s err=%s", guild_id, st.voice_channel_id, exc)
             return
         st.voice_client = new_vc
+        if st.stream:
+            st.stream.close()
+        st.stream = None
+
+    def _ensure_streaming(self, guild_id: int) -> bool:
+        st = self.guild_state.get(guild_id)
+        if not st:
+            return False
+        vc = st.voice_client
+        if st.stream is None or getattr(st.stream, "_closed", False):
+            st.stream = GuildPCMStream(guild_id)
+        if not vc.is_playing():
+            try:
+                vc.play(st.stream)
+            except Exception as exc:
+                LOG.warning("Stream play failed guild_id=%s err=%s", guild_id, exc)
+                return False
+        return True
 
     async def _set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         if not interaction.guild:
@@ -751,6 +844,8 @@ class Bot(discord.Client):
                         await self._cancel_task(st.worker_task, name="clone-cleanup-worker")
                         drained = self._drain_queue(st.queue)
                         self._decrement_global_queue(drained)
+                        if st.stream:
+                            st.stream.close()
                         await st.voice_client.disconnect(force=True)
                         self.guild_state.pop(guild_id, None)
                         LOG.info("Left voice after clone guild_id=%s", interaction.guild_id)

@@ -25,6 +25,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 - Admin database (SQLite): persistent storage for admin roles.
 - In-memory state:
   - Per-guild playback queues with ordered delivery.
+  - Per-guild PCM stream feeding a single Discord audio source.
   - Fairness scheduler with per-guild request queues (round-robin).
 
 ## Message → Audio Pipeline (Current)
@@ -32,7 +33,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 2. Validate guild + channel + prompt presence + cloning status.
 3. Enqueue TTS request into per-guild scheduler (round-robin) → get a future for WAV bytes.
 4. Enqueue TTS future into per-guild playback queue.
-5. Playback worker consumes futures in order and plays audio.
+5. Playback worker consumes futures in order and enqueues PCM into a per-guild stream (single Discord audio source).
 
 ## Behavior Notes
 - Scheduler batches across guilds while ensuring round-robin fairness (one per guild per cycle; fills remaining slots if fewer guilds).

@@ -136,7 +136,7 @@ async def test_player_worker_orders_playback(monkeypatch):
     await q.join()
     await cancel_task(worker)
 
-    assert vc.play_calls == [b"pcm:one", b"pcm:two"]
+    assert bot.guild_state[guild_id].stream.items == [b"pcm:one", b"pcm:two"]
 
 
 @pytest.mark.asyncio

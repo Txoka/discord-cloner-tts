@@ -205,7 +205,8 @@ async def test_player_worker_handles_none_and_exception(monkeypatch):
     await q.join()
     await cancel_task(worker)
 
-    assert vc.play_calls == []
+    st = bot.guild_state[1]
+    assert st.stream is None or st.stream.items == []
 
 
 @pytest.mark.asyncio
@@ -270,7 +271,6 @@ async def test_player_reconnects_after_disconnect(monkeypatch):
 
     monkeypatch.setattr(bot, "_ensure_voice_connected", fake_ensure)
     monkeypatch.setattr(bot_mod, "prepare_tts_pcm", lambda b, *_args: (b, 48000, 2))
-    monkeypatch.setattr(bot_mod.discord, "PCMAudio", FakePCMAudio)
     worker = asyncio.create_task(bot._player_worker(1))
 
     loop = asyncio.get_running_loop()
@@ -280,7 +280,7 @@ async def test_player_reconnects_after_disconnect(monkeypatch):
 
     await q.join()
     await cancel_task(worker)
-    assert vc.play_calls
+    assert bot.guild_state[1].stream.items
 
 
 @pytest.mark.asyncio

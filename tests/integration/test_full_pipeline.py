@@ -138,8 +138,8 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
         await bot.guild_state[1].queue.join()
         await bot.guild_state[2].queue.join()
 
-        assert bot.guild_state[1].voice_client.play_calls == [b"11", b"33"]
-        assert bot.guild_state[2].voice_client.play_calls == [b"22"]
+        assert bot.guild_state[1].stream.items == [b"11", b"33"]
+        assert bot.guild_state[2].stream.items == [b"22"]
 
         calls = engine._model.calls
         assert calls

@@ -66,6 +66,7 @@ async def test_full_pipeline_round_robin_and_model_batch(monkeypatch, tmp_path):
         return [FakePromptItem(ref_spk_embedding=object())]
 
     monkeypatch.setattr(engine, "get_prompt", fake_get_prompt)
+    monkeypatch.setattr(engine, "prompt_exists", lambda user_id: True)
     monkeypatch.setattr("app.tts.engine.MAX_BATCH_SIZE", 3)
 
     def fake_write_wav(wav, sr: int):

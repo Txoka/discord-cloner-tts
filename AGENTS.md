@@ -39,6 +39,11 @@
 - PRs should describe behavior changes, configuration updates, and any new dependencies.
 - Include usage notes if new environment variables are introduced.
 
+## Documentation & Planning
+- Read and keep `ARCHITECTURE.md` current when behavior or structure changes.
+- Use `TODO.md` to track active work and update it as tasks are completed.
+- Update user-facing docs (e.g., `README.md`) whenever behavior or configuration changes.
+
 ## Security & Configuration Tips
 - Store secrets in `.env` (e.g., `DISCORD_TOKEN`) and avoid committing real tokens.
 - Model and runtime settings are controlled via `QWEN_TTS_*` env vars in `app/config.py`.

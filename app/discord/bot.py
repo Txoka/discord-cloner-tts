@@ -72,7 +72,8 @@ class GuildPCMStream(discord.AudioSource):
                 try:
                     self._current = self._queue.get_nowait()
                 except queue.Empty:
-                    break
+                    self._closed = True
+                    return b""
 
             item = self._current
             if item is None:

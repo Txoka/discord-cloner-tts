@@ -60,6 +60,15 @@ class FakeAdminStore:
     def list_debug_guilds(self):
         return [1]
 
+    def list_admins(self):
+        return []
+
+    def add_debug_guild(self, guild_id: int) -> None:
+        return None
+
+    def remove_debug_guild(self, guild_id: int) -> bool:
+        return True
+
 
 @pytest.mark.asyncio
 async def test_clone_creates_prompt_file(monkeypatch, tmp_path):

@@ -24,6 +24,15 @@ class FakeAdminStore:
     def list_debug_guilds(self):
         return [1, 2]
 
+    def list_admins(self):
+        return []
+
+    def add_debug_guild(self, guild_id: int) -> None:
+        return None
+
+    def remove_debug_guild(self, guild_id: int) -> bool:
+        return True
+
 
 @pytest.mark.asyncio
 async def test_pipeline_global_engine_per_guild_order(monkeypatch, tmp_path):

@@ -23,6 +23,9 @@ class FakeAdminStore:
     def has_role(self, user_id: int, role: str) -> bool:
         return True
 
+    def list_admins(self):
+        return []
+
 
 def test_single_user_pcm_collector_ignores_other_user():
     collector = bot_mod.SingleUserPCMCollector(target_user_id=1)
@@ -192,3 +195,27 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 
     await bot.on_message(msg)
     assert tts.last[1] == 5
+
+
+@pytest.mark.asyncio
+async def test_admin_list(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def list_admins(self):
+            return [bot_mod.AdminRecord(user_id=1, role="superadmin")]
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = object()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    monkeypatch.setattr(bot_mod, "DISCORD_ADMIN_ENABLED", True)
+    bot = Bot(tts=None, admin_store=FakeStore())  # type: ignore[arg-type]
+    interaction = FakeInteraction()
+    await bot._admin_list(interaction)
+    assert interaction.messages
+    assert "superadmin" in interaction.messages[0]

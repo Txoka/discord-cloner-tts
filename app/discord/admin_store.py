@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional, Sequence, List
 
 
 @dataclass(frozen=True)
@@ -103,6 +103,13 @@ class AdminStore:
                 (int(user_id),),
             ).fetchall()
         return [str(r["role"]) for r in rows]
+
+    def list_admins(self) -> List[AdminRecord]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, role FROM admin_roles ORDER BY user_id, role"
+            ).fetchall()
+        return [AdminRecord(user_id=int(r["user_id"]), role=str(r["role"])) for r in rows]
 
     def add_role(self, user_id: int, role: str) -> None:
         if int(user_id) in self._master_superadmins:

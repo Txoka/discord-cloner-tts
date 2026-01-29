@@ -47,6 +47,16 @@ def test_admin_store_migrates_legacy_table(tmp_path):
     assert store.has_role(7, "admin")
 
 
+def test_admin_store_list_admins(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[])
+    store.init_schema()
+    store.add_role(2, "admin")
+    store.add_role(1, "superadmin")
+    out = store.list_admins()
+    assert [(r.user_id, r.role) for r in out] == [(1, "superadmin"), (2, "admin")]
+
+
 def test_admin_store_migrates_legacy_table(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
     store = AdminStore(db_path, master_superadmins=[])

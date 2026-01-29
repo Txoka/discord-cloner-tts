@@ -103,6 +103,10 @@ def main() -> None:
         async def removeadmin(interaction: discord.Interaction, target: discord.Member):
             await bot._remove_admin(interaction, target)
 
+        @bot.tree.command(name="adminlist", description="Admins only: list current admins and roles.")
+        async def adminlist(interaction: discord.Interaction):
+            await bot._admin_list(interaction)
+
     @bot.tree.command(name="sync", description="Owner only: sync slash commands.")
     async def sync(interaction: discord.Interaction):
         await bot._sync_commands(interaction)

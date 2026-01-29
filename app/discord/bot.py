@@ -605,6 +605,26 @@ class Bot(discord.Client):
             ephemeral=True,
         )
 
+    async def _admin_list(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self.admin_enabled:
+            await interaction.response.send_message("Admin features are disabled.", ephemeral=True)
+            return
+        if not self._is_admin(int(interaction.user.id)):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+
+        records = self.admin_store.list_admins()
+        if not records:
+            await interaction.response.send_message("No admins found.", ephemeral=True)
+            return
+
+        lines = [f"<@{r.user_id}> — {r.role}" for r in records]
+        out = "Admins:\n" + "\n".join(lines)
+        await interaction.response.send_message(out[:1900], ephemeral=True)
+
     async def _sync_commands(self, interaction: discord.Interaction) -> None:
         if not self.admin_enabled:
             await interaction.response.send_message("Admin features are disabled.", ephemeral=True)

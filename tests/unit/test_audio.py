@@ -91,9 +91,9 @@ def test_trim_silence_energy_from_file():
     mono = audio.to_mono_float32(data)
     trimmed = audio.trim_silence_energy(mono, int(sr))
 
-    # TODO: Update expected crop window once you provide the file.
+    # Expected crop window for the provided sample (see tests/assets/vad_sample.wav).
     expected_start_ms = 0
-    expected_end_ms = 0
+    expected_end_ms = 410
     tolerance_ms = 50
 
     expected_len = int(round((expected_end_ms - expected_start_ms) * int(sr) / 1000.0))

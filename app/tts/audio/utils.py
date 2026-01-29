@@ -138,8 +138,10 @@ def trim_silence_energy(
     hop_ms: int = 10,
     noise_percentile: float = 10.0,
     snr_db: float = 10.0,
+    floor_db: float = -45.0,
     pad_ms: int = 150,
     min_keep_ms: int = 300,
+    min_voiced_ms: int = 60,
 ) -> np.ndarray:
     """Energy-based VAD trim.
 
@@ -174,15 +176,43 @@ def trim_silence_energy(
 
     db = 20.0 * np.log10(np.maximum(rms, eps))
 
-    noise_db = float(np.percentile(db, noise_percentile))
-    thr_db = noise_db + float(snr_db)
+    def find_voiced(thr_db: float, floor_db_value: float) -> np.ndarray:
+        return db >= max(thr_db, floor_db_value)
 
-    voiced = db >= thr_db
+    def find_voiced_bounds(mask: np.ndarray) -> tuple[int, int] | None:
+        min_frames = max(1, int(round(min_voiced_ms / max(hop_ms, 1))))
+        if mask.size < min_frames:
+            return None
+        if min_frames == 1:
+            first_idx = int(np.argmax(mask))
+            if not mask[first_idx]:
+                return None
+            last_idx = int(len(mask) - 1 - np.argmax(mask[::-1]))
+            return first_idx, last_idx
+
+        window = np.ones((min_frames,), dtype=np.int32)
+        hits = np.convolve(mask.astype(np.int32), window, mode="valid")
+        idx = np.flatnonzero(hits >= min_frames)
+        if idx.size == 0:
+            return None
+        first_idx = int(idx[0])
+        last_idx = int(idx[-1] + min_frames - 1)
+        return first_idx, last_idx
+
+    db_median = float(np.median(db))
+    mad = float(np.median(np.abs(db - db_median)))
+    if mad <= 1e-6:
+        mad = 1e-6
+    thr_db = db_median + 3.0 * mad
+
+    voiced = find_voiced(thr_db, floor_db)
     if not np.any(voiced):
         return x
 
-    first = int(np.argmax(voiced))
-    last = int(len(voiced) - 1 - np.argmax(voiced[::-1]))
+    bounds = find_voiced_bounds(voiced)
+    if bounds is None:
+        return x
+    first, last = bounds
 
     start_samp = int(starts[first])
     end_samp = int(starts[last] + frame)

@@ -152,8 +152,8 @@ async def test_join_leave_sequence_during_clone(monkeypatch):
     guild = FakeGuild(1)
     user = FakeUser(5)
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=user, guild=guild)
-    channel = FakeVoiceChannel(FakeVoiceClient(), channel_id=123)
-    other = FakeVoiceChannel(FakeVoiceClient(), channel_id=999)
+    channel = FakeVoiceChannel(FakeVoiceClient(), channel_id=123, members=[user])
+    other = FakeVoiceChannel(FakeVoiceClient(), channel_id=999, members=[user])
 
     lock = bot._clone_lock.setdefault(1, asyncio.Lock())
     await lock.acquire()

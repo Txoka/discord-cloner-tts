@@ -35,7 +35,7 @@ make logs
 ```
 
 ## Discord commands
-- `/join [channel]` - Join the caller's voice channel, or an explicitly provided one.
+- `/join [channel]` - Join the caller's voice channel, or an explicitly provided one (must have at least one human).
 - `/leave` - Leave voice chat.
 - `/setchannel #channel` - Choose which text channel to read aloud.
 - `/clone` - Record a 20s Spanish sample to enroll your voice.
@@ -81,6 +81,9 @@ QWEN_TTS_CLONE_SECONDS=20
 QWEN_TTS_CLONE_MIN_SECONDS=3.0
 QWEN_TTS_CLONE_TEXT=...         # Optional custom sample text
 
+# Auto-leave
+QWEN_TTS_AUTO_LEAVE_SECONDS=300  # Leave when alone in voice for this many seconds
+
 # Storage
 VOICES_DIR=/app/voices
 DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
@@ -94,6 +97,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - Admin roles are stored in a SQLite database under `./data`.
 - TTS scheduling is round-robin across guilds to keep fairness while batching.
 - Messages are rejected with a ❌ reaction when queue limits are exceeded.
+- If the bot is alone in voice for `QWEN_TTS_AUTO_LEAVE_SECONDS`, it disconnects.
 - Admin commands only exist in guilds listed in `DISCORD_DEBUG_GUILD_IDS` (and stored in the DB).
 - During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 

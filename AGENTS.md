@@ -16,7 +16,7 @@
 - `make up` — run the service via Docker Compose (GPU-enabled; rebuilds if needed).
 - `make down` — stop and remove the Compose stack.
 - `make logs` — tail container logs.
-- `make test` — run the test suite via Docker Compose.
+- `make test` — run the test suite via Docker Compose (can take up to ~400 seconds when rebuilding images).
 
 ## Coding Style & Naming Conventions
 - Python 3.12; use 4-space indentation and match existing import/order patterns.

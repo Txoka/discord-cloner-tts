@@ -26,6 +26,9 @@ class FakePCMAudio:
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -43,6 +46,15 @@ class FakeAdminStore:
 
     def remove_debug_guild(self, guild_id: int) -> bool:
         return True
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
 
 
 class FakeTTS:
@@ -288,7 +300,7 @@ async def test_disguise_missing_prompt_skips(monkeypatch, tmp_path):
     tts = FakeTTS(tmp_path)
     bot = Bot(tts=tts, admin_store=FakeAdminStore())
     bot._debug_guilds.add(1)
-    bot._disguises.setdefault(1, {})[5] = 99
+    bot._disguises[5] = 99
 
     def fake_prompt_exists(user_id: int) -> bool:
         return int(user_id) != 99
@@ -317,7 +329,7 @@ async def test_disguise_missing_prompt_skips(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_remove_debug_guild_clears_disguises(tmp_path):
+async def test_remove_debug_guild_preserves_disguises(tmp_path):
     tts = FakeTTS(tmp_path)
     admin_store = AdminStore(tmp_path / "admins.sqlite3", master_superadmins=[1], debug_guild_ids=[1])
     admin_store.init_schema()
@@ -326,7 +338,7 @@ async def test_remove_debug_guild_clears_disguises(tmp_path):
 
     bot = Bot(tts=tts, admin_store=admin_store)
     bot._debug_guilds.add(1)
-    bot._disguises[1] = {5: 99}
+    bot._disguises[5] = 99
 
     class FakeInteraction:
         def __init__(self):
@@ -343,7 +355,7 @@ async def test_remove_debug_guild_clears_disguises(tmp_path):
 
     bot.tree.sync = fake_sync  # type: ignore[assignment]
     await bot._remove_debug_guild(FakeInteraction(), 1)
-    assert 1 not in bot._disguises
+    assert bot._disguises.get(5) == 99
 
 
 @pytest.mark.asyncio

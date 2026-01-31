@@ -25,6 +25,9 @@ class FakePCMAudio:
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -48,6 +51,18 @@ class FakeAdminStore:
 
     def list_debug_guilds(self):
         return [1, 2]
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
+
+    def get_disguise(self, user_id: int):
+        return self._disguises.get(int(user_id))
 
 
 def test_single_user_pcm_collector_ignores_other_user():
@@ -297,7 +312,7 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 
     tts = FakeTTS()
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
-    bot._disguises.setdefault(1, {})[5] = 99
+    bot._disguises[5] = 99
 
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -316,6 +331,43 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 
     await bot.on_message(msg)
     assert tts.last[1] == 5
+
+
+@pytest.mark.asyncio
+async def test_admin_enabled_applies_disguise_across_debug_guilds(monkeypatch):
+    class FakeTTS:
+        def prompt_exists(self, user_id: int) -> bool:
+            return True
+
+        async def enqueue(self, guild_id: int, user_id: int, text: str):
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            fut.set_result(b"wav")
+            self.last = (guild_id, user_id, text)
+            return fut
+
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    bot._debug_guilds.update({1, 2})
+    bot._disguises[5] = 99
+
+    guild = FakeGuild(2)
+    channel = FakeChannel(10)
+    user = FakeUser(5)
+    msg = FakeMessage(guild=guild, channel=channel, author=user, clean_content="hi")
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[2] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=2,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[2].worker_task)
+
+    await bot.on_message(msg)
+    assert tts.last[1] == 99
 
 
 @pytest.mark.asyncio
@@ -363,3 +415,66 @@ async def test_debug_guild_list():
     interaction = FakeInteraction()
     await bot._debug_guild_list(interaction)
     assert "2" in interaction.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_debug_command_enables_current_guild(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def __init__(self):
+            super().__init__()
+            self._guilds: set[int] = set()
+
+        def list_debug_guilds(self):
+            return list(self._guilds)
+
+        def add_debug_guild(self, guild_id: int) -> None:
+            self._guilds.add(int(guild_id))
+
+        def remove_debug_guild(self, guild_id: int) -> bool:
+            existed = int(guild_id) in self._guilds
+            self._guilds.discard(int(guild_id))
+            return existed
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 9})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    bot = Bot(tts=None, admin_store=FakeStore())  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    interaction = FakeInteraction()
+    await bot._debug_current_guild(interaction)
+    assert 9 in bot._debug_guilds
+    assert interaction.messages
+    interaction.messages = []
+    await bot._debug_current_guild(interaction)
+    assert 9 not in bot._debug_guilds
+    assert interaction.messages
+
+
+def test_debug_command_can_be_disabled():
+    bot = Bot(tts=None, admin_store=FakeAdminStore(), enable_debug_command=False)  # type: ignore[arg-type]
+    names = [cmd.name for cmd in bot.tree.get_commands()]
+    assert "debug" not in names
+
+
+@pytest.mark.asyncio
+async def test_debug_command_disabled_not_synced(monkeypatch):
+    bot = Bot(tts=None, admin_store=FakeAdminStore(), enable_debug_command=False)  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    await bot.setup_hook()
+    names = [cmd.name for cmd in bot.tree.get_commands()]
+    assert "debug" not in names

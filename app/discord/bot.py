@@ -207,7 +207,7 @@ class GuildState:
 
 
 class Bot(discord.Client):
-    def __init__(self, tts: TTSEngine, admin_store: AdminStore):
+    def __init__(self, tts: TTSEngine, admin_store: AdminStore, *, enable_debug_command: bool = True):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.messages = True
@@ -225,8 +225,10 @@ class Bot(discord.Client):
         self._cloning_users: set[int] = set()
         self._cloning_channels: Dict[int, int] = {}
         self._clone_joined: Dict[int, bool] = {}
-        self._disguises: Dict[int, Dict[int, int]] = {}
+        self._disguises: Dict[int, int] = dict(self.admin_store.list_disguises())
         self._admin_commands: list[app_commands.Command] = []
+        self._global_commands: list[app_commands.Command] = []
+        self._enable_debug_command = bool(enable_debug_command)
         self._global_queue_size = 0
         self._auto_leave_tasks: Dict[int, asyncio.Task] = {}
         self._register_admin_command_objects()
@@ -320,6 +322,15 @@ class Bot(discord.Client):
             callback=debugguildlist,
         )
 
+        async def debug(interaction: discord.Interaction):
+            await self._debug_current_guild(interaction)
+
+        debug_cmd = app_commands.Command(
+            name="debug",
+            description="Admins only: enable admin commands in this guild.",
+            callback=debug,
+        )
+
         self._admin_commands = [
             disguise_cmd,
             addadmin_cmd,
@@ -330,6 +341,10 @@ class Bot(discord.Client):
             removedebugguild_cmd,
             debugguildlist_cmd,
         ]
+        if self._enable_debug_command:
+            self._global_commands = [debug_cmd]
+            for cmd in self._global_commands:
+                self.tree.add_command(cmd)
 
     @staticmethod
     def _trace_ms(trace: Dict[str, float], start: str, end: str) -> Optional[float]:
@@ -389,6 +404,9 @@ class Bot(discord.Client):
     def _is_admin(self, user_id: int, guild_id: int | None) -> bool:
         if not self._is_debug_guild(guild_id):
             return False
+        return self.admin_store.is_admin(int(user_id))
+
+    def _is_admin_global(self, user_id: int) -> bool:
         return self.admin_store.is_admin(int(user_id))
 
     def _is_superadmin(self, user_id: int, guild_id: int | None) -> bool:
@@ -883,7 +901,8 @@ class Bot(discord.Client):
         target_id = int(target.id)
         caller_id = int(interaction.user.id)
         if target_id == caller_id:
-            self._disguises.get(guild_id, {}).pop(caller_id, None)
+            self._disguises.pop(caller_id, None)
+            self.admin_store.clear_disguise(caller_id)
             await interaction.response.send_message("Disguise cleared. Using your own voice.", ephemeral=True)
             return
 
@@ -894,7 +913,8 @@ class Bot(discord.Client):
             )
             return
 
-        self._disguises.setdefault(guild_id, {})[caller_id] = target_id
+        self._disguises[caller_id] = target_id
+        self.admin_store.set_disguise(caller_id, target_id)
         await interaction.response.send_message(
             f"Disguise set. You will speak using {target.mention}'s voice.",
             ephemeral=True,
@@ -938,6 +958,7 @@ class Bot(discord.Client):
         target_id = int(target.id)
         removed = self.admin_store.remove_admin(target_id)
         if removed:
+            self._disguises.pop(target_id, None)
             await interaction.response.send_message(f"Removed admin: {target.mention}.", ephemeral=True)
             LOG.info("Admin removed by user_id=%s target_id=%s", interaction.user.id, target_id)
             return
@@ -1001,6 +1022,36 @@ class Bot(discord.Client):
         await interaction.response.send_message(f"Enabled admin commands for guild_id={target_gid}.", ephemeral=True)
         LOG.info("Added debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
 
+    async def _debug_current_guild(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self._is_admin_global(int(interaction.user.id)):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        target_gid = int(interaction.guild.id)
+        if target_gid in self._debug_guilds:
+            removed = self.admin_store.remove_debug_guild(target_gid)
+            self._debug_guilds.discard(target_gid)
+            self._unregister_admin_commands_for_guild(target_gid)
+            await self.tree.sync(guild=discord.Object(id=target_gid))
+            if removed:
+                await interaction.response.send_message("Disabled admin commands for this guild.", ephemeral=True)
+                LOG.info(
+                    "Removed debug guild_id=%s by user_id=%s (self-debug)",
+                    target_gid,
+                    interaction.user.id,
+                )
+            else:
+                await interaction.response.send_message("Debug was not enabled for this guild.", ephemeral=True)
+            return
+        self.admin_store.add_debug_guild(target_gid)
+        self._debug_guilds.add(target_gid)
+        self._register_admin_commands_for_guild(target_gid)
+        await self.tree.sync(guild=discord.Object(id=target_gid))
+        await interaction.response.send_message("Enabled admin commands for this guild.", ephemeral=True)
+        LOG.info("Added debug guild_id=%s by user_id=%s (self-debug)", target_gid, interaction.user.id)
+
     async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
@@ -1016,7 +1067,6 @@ class Bot(discord.Client):
             return
         removed = self.admin_store.remove_debug_guild(target_gid)
         self._debug_guilds.discard(target_gid)
-        self._disguises.pop(target_gid, None)
         self._unregister_admin_commands_for_guild(target_gid)
         await self.tree.sync(guild=discord.Object(id=target_gid))
         if removed:
@@ -1063,8 +1113,8 @@ class Bot(discord.Client):
         # Resolve voice id (admin disguise)
         author_id = int(message.author.id)
         voice_id = author_id
-        if self._is_debug_guild(int(message.guild.id)):
-            voice_id = self._disguises.get(int(message.guild.id), {}).get(author_id, author_id)
+        if self._is_debug_guild(int(message.guild.id)) and self._is_admin(author_id, int(message.guild.id)):
+            voice_id = self._disguises.get(author_id, author_id)
 
         # Only speak if target voice has an enrolled prompt file
         if not self.tts.prompt_exists(voice_id):

@@ -21,6 +21,9 @@ from tests.helpers.fakes import (
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -38,6 +41,15 @@ class FakeAdminStore:
 
     def remove_debug_guild(self, guild_id: int) -> bool:
         return True
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
 
 
 class FakeTTS:
@@ -123,7 +135,7 @@ async def test_remove_debug_guild_race_with_messages(tmp_path, monkeypatch):
     tts = FakeTTS(tmp_path)
     bot = Bot(tts=tts, admin_store=admin_store)
     bot._debug_guilds.add(1)
-    bot._disguises[1] = {5: 99}
+    bot._disguises[5] = 99
 
     q: asyncio.Queue[TTSJob] = asyncio.Queue()
     bot.guild_state[1] = GuildState(
@@ -143,7 +155,7 @@ async def test_remove_debug_guild_race_with_messages(tmp_path, monkeypatch):
     msg = FakeMessage(FakeGuild(1), FakeChannel(10), FakeUser(5), "hello")
 
     await asyncio.gather(bot.on_message(msg), bot._remove_debug_guild(FakeInteraction(1, 10, FakeUser(1), FakeGuild(1)), 1))
-    assert 1 not in bot._disguises
+    assert bot._disguises.get(5) == 99
 
 
 @pytest.mark.asyncio

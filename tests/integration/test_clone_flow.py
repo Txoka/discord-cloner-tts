@@ -52,6 +52,9 @@ class FakeTTS:
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -69,6 +72,15 @@ class FakeAdminStore:
 
     def remove_debug_guild(self, guild_id: int) -> bool:
         return True
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
 
 
 @pytest.mark.asyncio

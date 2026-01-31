@@ -22,7 +22,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 
 ## Data & State
 - Voice prompt files: `voices/<user_id>.pt`.
-- Admin database (SQLite): persistent storage for admin roles.
+- Admin database (SQLite): persistent storage for admin roles and admin disguises.
 - In-memory state:
   - Per-guild playback queues with ordered delivery.
   - Per-guild PCM stream feeding a single Discord audio source.
@@ -40,6 +40,8 @@ This project runs a Discord bot that reads messages from a selected text channel
 - Queue limits are enforced at ingest (global + per-guild); rejected messages get a ❌ reaction.
 - Admin roles are stored in SQLite with two levels: admin and superadmin (master superadmins from env).
 - Admin commands are only registered in debug guilds; other guilds have no admin behavior.
+- `/debug` is a global command that toggles admin commands for the current guild.
+- Admin disguises are stored per admin user and apply in any debug guild.
 - While cloning, `/leave` is blocked and `/join` is restricted to the cloning channel; the bot disconnects after clone unless already joined (or joined during cloning).
 - `/join` refuses empty voice channels, and the bot auto-leaves after being alone for the configured timeout.
 
@@ -48,6 +50,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 - `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs.
 - `DISCORD_DEBUG_GUILD_IDS`: comma-separated list of guild IDs that get admin commands.
 - `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
+- `DISCORD_DEBUG_COMMAND_ENABLED`: enable or disable the global `/debug` toggle.
 - `QWEN_TTS_*`: model/runtime settings.
 - `QWEN_TTS_GLOBAL_QUEUE_LIMIT` / `QWEN_TTS_GUILD_QUEUE_LIMIT`: queue limits.
 - `QWEN_TTS_AUTO_LEAVE_SECONDS`: seconds before auto-leaving when alone in voice.

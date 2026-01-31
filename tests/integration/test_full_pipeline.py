@@ -44,6 +44,9 @@ class FakeModel:
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -55,6 +58,15 @@ class FakeAdminStore:
 
     def list_admins(self):
         return []
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
 
 
 class FakeTTS:
@@ -177,6 +189,8 @@ async def test_debug_guild_command_gating(monkeypatch, tmp_path):
     guild_cmds = [c.name for c in bot.tree.get_commands(guild=bot_mod.discord.Object(id=1))]
     assert "disguise" in guild_cmds
     assert "adddebugguild" in guild_cmds
+    global_cmds = [c.name for c in bot.tree.get_commands()]
+    assert "debug" in global_cmds
     other_cmds = [c.name for c in bot.tree.get_commands(guild=bot_mod.discord.Object(id=2))]
     assert "disguise" not in other_cmds
 
@@ -191,7 +205,7 @@ async def test_add_remove_debug_guild(monkeypatch, tmp_path):
 
     bot = Bot(tts=engine, admin_store=admin_store)
     bot._debug_guilds.add(1)
-    bot._disguises[3] = {10: 99}
+    bot._disguises[10] = 99
 
     async def fake_sync(*_args, **_kwargs):
         return None
@@ -219,7 +233,7 @@ async def test_add_remove_debug_guild(monkeypatch, tmp_path):
     await bot._remove_debug_guild(FakeInteraction(1), 3)
     assert 3 not in admin_store.list_debug_guilds()
     assert 3 not in bot._debug_guilds
-    assert 3 not in bot._disguises
+    assert bot._disguises.get(10) == 99
 
 
 @pytest.mark.asyncio

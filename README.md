@@ -44,6 +44,7 @@ make logs
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
 - `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
 - `/adminlist` - Admins only: list all admins and their roles.
+- `/debug` - Admins only: toggle admin commands for the current guild.
 - `/adddebugguild <guild_id>` - Admins only: enable admin commands for a guild.
 - `/removedebugguild <guild_id>` - Admins only: disable admin commands for a guild.
 - `/debugguildlist` - Admins only: list guilds with admin commands enabled.
@@ -56,6 +57,7 @@ Environment variables (set in `.env`):
 DISCORD_TOKEN=...
 DISCORD_SUPERADMIN_IDS=441597233150951425   # Comma-separated IDs
 DISCORD_DEBUG_GUILD_IDS=                   # Comma-separated guild IDs
+DISCORD_DEBUG_COMMAND_ENABLED=true         # Enable /debug global toggle
 
 # Model and runtime
 QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-Base

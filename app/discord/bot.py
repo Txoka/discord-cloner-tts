@@ -341,6 +341,8 @@ class Bot(discord.Client):
             removedebugguild_cmd,
             debugguildlist_cmd,
         ]
+        if not self._enable_debug_command:
+            self._admin_commands.append(debug_cmd)
         if self._enable_debug_command:
             self._global_commands = [debug_cmd]
             for cmd in self._global_commands:

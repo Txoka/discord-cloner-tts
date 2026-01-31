@@ -478,3 +478,20 @@ async def test_debug_command_disabled_not_synced(monkeypatch):
     await bot.setup_hook()
     names = [cmd.name for cmd in bot.tree.get_commands()]
     assert "debug" not in names
+
+
+@pytest.mark.asyncio
+async def test_debug_command_disabled_still_in_debug_guild(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def list_debug_guilds(self):
+            return [1]
+
+    bot = Bot(tts=None, admin_store=FakeStore(), enable_debug_command=False)  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    await bot.setup_hook()
+    guild_cmds = [c.name for c in bot.tree.get_commands(guild=bot_mod.discord.Object(id=1))]
+    assert "debug" in guild_cmds

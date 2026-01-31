@@ -57,7 +57,7 @@ Environment variables (set in `.env`):
 DISCORD_TOKEN=...
 DISCORD_SUPERADMIN_IDS=441597233150951425   # Comma-separated IDs
 DISCORD_DEBUG_GUILD_IDS=                   # Comma-separated guild IDs
-DISCORD_DEBUG_COMMAND_ENABLED=true         # Enable /debug global toggle
+DISCORD_DEBUG_COMMAND_ENABLED=true         # Enable global /debug (still available in debug guilds)
 
 # Model and runtime
 QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-Base

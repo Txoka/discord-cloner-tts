@@ -50,7 +50,7 @@ This project runs a Discord bot that reads messages from a selected text channel
 - `DISCORD_SUPERADMIN_IDS`: comma-separated list of superadmin IDs.
 - `DISCORD_DEBUG_GUILD_IDS`: comma-separated list of guild IDs that get admin commands.
 - `DISCORD_ADMIN_DB_PATH`: SQLite DB file path.
-- `DISCORD_DEBUG_COMMAND_ENABLED`: enable or disable the global `/debug` toggle.
+- `DISCORD_DEBUG_COMMAND_ENABLED`: enable or disable the global `/debug` toggle (still available in debug guilds).
 - `QWEN_TTS_*`: model/runtime settings.
 - `QWEN_TTS_GLOBAL_QUEUE_LIMIT` / `QWEN_TTS_GUILD_QUEUE_LIMIT`: queue limits.
 - `QWEN_TTS_AUTO_LEAVE_SECONDS`: seconds before auto-leaving when alone in voice.

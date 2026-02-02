@@ -116,6 +116,26 @@ class TTSEngine:
         LOG.debug("Enqueued TTS guild_id=%s user_id=%s pending=%d", guild_id, user_id, self._pending_total)
         return fut
 
+    async def discard_guild(self, guild_id: int) -> int:
+        """Drop all pending requests for a guild from the TTS queue."""
+        guild_id = int(guild_id)
+        removed = 0
+        async with self._queue_lock:
+            q = self._guild_queues.pop(guild_id, None)
+            if q:
+                removed = len(q)
+                for req in q:
+                    req.future.cancel()
+                self._pending_total = max(0, self._pending_total - removed)
+            self._active_set.discard(guild_id)
+            if self._active_guilds:
+                self._active_guilds = deque(g for g in self._active_guilds if g != guild_id)
+            if not self._active_guilds and self._pending_total == 0:
+                self._queue_event.clear()
+        if removed:
+            LOG.info("Discarded TTS queue guild_id=%s removed=%d pending=%d", guild_id, removed, self._pending_total)
+        return removed
+
     async def _queue_worker(self) -> None:
         LOG.info("TTS worker loop running")
         while True:

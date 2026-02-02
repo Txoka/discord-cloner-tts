@@ -167,3 +167,30 @@ async def test_queue_worker_round_robin(monkeypatch, tmp_path):
     assert captured
     assert captured[0] == [(1, "g1-a"), (2, "g2-a"), (1, "g1-b")]
     await cancel_task(engine._worker_task)
+
+
+@pytest.mark.asyncio
+async def test_discard_guild_cancels_pending(monkeypatch, tmp_path):
+    engine = TTSEngine(tmp_path)
+
+    async def fake_ensure_worker() -> None:
+        return None
+
+    monkeypatch.setattr(engine, "_ensure_worker", fake_ensure_worker)
+
+    fut1 = await engine.enqueue(1, 10, "a")
+    fut2 = await engine.enqueue(1, 10, "b")
+    fut3 = await engine.enqueue(2, 20, "c")
+
+    removed = await engine.discard_guild(1)
+    assert removed == 2
+    assert fut1.cancelled()
+    assert fut2.cancelled()
+    assert not fut3.cancelled()
+
+    async with engine._queue_lock:
+        assert 1 not in engine._guild_queues
+        assert 1 not in engine._active_set
+        assert engine._pending_total == 1
+
+    fut3.cancel()

@@ -1257,6 +1257,8 @@ class Bot(discord.Client):
         await self._cancel_task(st.worker_task, name=f"{reason}-worker")
         drained = self._drain_queue(st.queue)
         self._decrement_global_queue(drained)
+        if self.tts is not None and hasattr(self.tts, "discard_guild"):
+            await self.tts.discard_guild(guild_id)
         if st.stream:
             st.stream.close()
         try:

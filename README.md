@@ -36,7 +36,7 @@ make logs
 
 ## Discord commands
 - `/join [channel]` - Join the caller's voice channel, or an explicitly provided one (must have at least one human).
-- `/leave` - Leave voice chat.
+- `/leave` - Leave voice chat and discard queued TTS/playback messages for the guild.
 - `/setchannel #channel` - Choose which text channel to read aloud.
 - `/clone` - Record a 20s Spanish sample to enroll your voice.
 - `/forget` - Delete your enrolled voice prompt file.

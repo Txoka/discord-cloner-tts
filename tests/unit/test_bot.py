@@ -298,6 +298,40 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_leave_discards_guild_queues(monkeypatch):
+    class FakeTTS:
+        def __init__(self) -> None:
+            self.discarded: list[int] = []
+
+        async def discard_guild(self, guild_id: int) -> int:
+            self.discarded.append(int(guild_id))
+            return 0
+
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=1,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[1].worker_task)
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await q.put(TTSJob(tts_future=fut))
+
+    await bot._leave_guild(1, reason="test")
+
+    assert 1 not in bot.guild_state
+    assert fut.cancelled()
+    assert tts.discarded == [1]
+
+
+@pytest.mark.asyncio
 async def test_admin_disabled_ignores_disguise(monkeypatch):
     class FakeTTS:
         def prompt_exists(self, user_id: int) -> bool:

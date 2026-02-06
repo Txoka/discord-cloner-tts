@@ -7,8 +7,8 @@ flash-attn @ https://github.com/mjun0812/flash-attention-prebuild-wheels/release
 librosa==0.11.0
 onnxruntime==1.23.2
 python-dotenv==1.1.1
-vllm==0.14.1
-vllm-omni @ git+https://github.com/vllm-project/vllm-omni.git
+vllm==0.14.0
+vllm-omni==0.14.0
 qwen-omni-utils==0.0.8
 soundfile==0.13.1
 sox==1.5.0

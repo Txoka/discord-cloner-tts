@@ -104,6 +104,8 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 
 ## Troubleshooting
+- `ModuleNotFoundError: No module named 'vllm.multimodal.processing.context'` at startup:
+  - This is an API drift between `vllm-omni` and `vllm`. Use the pinned pair in `requirements.txt` (`vllm==0.14.0`, `vllm-omni==0.14.0`) and rebuild the image.
 - `ClientException: Already connected to a voice channel` on `/join` or `/clone`:
   - Usually means Discord has an active voice connection while the bot is trying to `connect()` again.
   - Workaround: run `/leave` then `/join` again, or wait a few seconds and retry.

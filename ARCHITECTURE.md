@@ -3,6 +3,8 @@
 ## Overview
 This project runs a Discord bot that reads messages from a selected text channel, synthesizes speech with Qwen3-TTS via vLLM-Omni, and plays audio in a guild voice channel. Each user must enroll a voice sample which is stored on disk and reused for future synthesis.
 
+Dependency compatibility note: `vllm` and `vllm-omni` must stay version-aligned to avoid runtime import errors during startup (for example, missing `vllm.multimodal.processing.context` when APIs drift).
+
 ## Core Components
 - `app/main.py`
   - Process entry point. Loads config, initializes `TTSEngine`, wires Discord slash commands.

@@ -14,6 +14,7 @@ from tests.helpers.fakes import (
     FakeUser,
     FakeVoiceChannel,
     FakeVoiceClient,
+    FakeVoiceRecvClient,
 )
 
 
@@ -89,18 +90,20 @@ async def test_clone_creates_prompt_file(monkeypatch, tmp_path):
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
 
     vc = FakeVoiceClient()
-    channel = FakeVoiceChannel(vc, channel_id=5)
+    recv_vc = FakeVoiceRecvClient()
+    channel = FakeVoiceChannel(vc, channel_id=5, recv_voice_client=recv_vc)
     member = FakeMember(123, channel)
     guild = FakeGuild(1, member=member)
 
-    # Existing connected state so we don't call connect
+    # Existing connected receive-capable state so we don't call connect
     q = asyncio.Queue()
     bot.guild_state[1] = GuildState(
-        voice_client=vc,
+        voice_client=recv_vc,
         voice_channel_id=1,
         text_channel_id=10,
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
+        voice_receive_enabled=True,
     )
     await cancel_task(bot.guild_state[1].worker_task)
 
@@ -124,7 +127,8 @@ async def test_clone_disconnects_when_not_prejoined(monkeypatch, tmp_path):
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
 
     vc = FakeVoiceClient()
-    channel = FakeVoiceChannel(vc)
+    recv_vc = FakeVoiceRecvClient()
+    channel = FakeVoiceChannel(vc, recv_voice_client=recv_vc)
     member = FakeMember(123, channel)
     guild = FakeGuild(1, member=member)
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
@@ -145,18 +149,20 @@ async def test_clone_keeps_prejoined_channel(monkeypatch, tmp_path):
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
 
     vc = FakeVoiceClient()
-    channel = FakeVoiceChannel(vc)
+    recv_vc = FakeVoiceRecvClient()
+    channel = FakeVoiceChannel(vc, recv_voice_client=recv_vc)
     member = FakeMember(123, channel)
     guild = FakeGuild(1, member=member)
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
 
     q = asyncio.Queue()
     bot.guild_state[1] = GuildState(
-        voice_client=vc,
+        voice_client=recv_vc,
         voice_channel_id=5,
         text_channel_id=10,
         queue=q,
         worker_task=asyncio.create_task(asyncio.sleep(0)),
+        voice_receive_enabled=True,
     )
     await cancel_task(bot.guild_state[1].worker_task)
     bot.guild_state[1].voice_channel_id = int(member.voice.channel.id)

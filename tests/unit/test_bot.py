@@ -15,6 +15,7 @@ from tests.helpers.fakes import (
     FakeUser,
     FakeVoiceChannel,
     FakeVoiceClient,
+    FakeVoiceRecvClient,
     SpyVoiceClient,
 )
 
@@ -136,6 +137,91 @@ async def test_join_refuses_empty_channel():
     await bot._join(interaction, empty_channel)
     assert interaction.response.messages
     assert "empty voice channel" in interaction.response.messages[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_join_uses_plain_voice_client():
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    guild = FakeGuild(1)
+    user = FakeUser(5)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=user, guild=guild)
+    channel = FakeVoiceChannel(FakeVoiceClient(), channel_id=123, members=[user])
+
+    await bot._join(interaction, channel)
+
+    assert channel.connect_calls
+    assert channel.connect_calls[-1]["cls"] is None
+    assert bot.guild_state[1].voice_receive_enabled is False
+    await cancel_task(bot.guild_state[1].worker_task)
+
+
+@pytest.mark.asyncio
+async def test_clone_upgrades_plain_voice_client_to_receive_client(monkeypatch, tmp_path):
+    class FakeTTS:
+        def __init__(self, voices_dir):
+            self._voices_dir = voices_dir
+            self.prompt_cache = {}
+
+        def prompt_path(self, user_id: int):
+            return self._voices_dir / f"{user_id}.pt"
+
+        def build_clone_prompt_items(self, ref_audio, ref_text):
+            return [object()]
+
+        def save_prompt_items_pt(self, prompt_items, out_pt):
+            out_pt.write_bytes(b"ok")
+
+        def set_prompt_exists(self, user_id: int, exists: bool) -> None:
+            return None
+
+    class FakeMember:
+        def __init__(self, user_id: int, voice_channel: FakeVoiceChannel):
+            self.id = int(user_id)
+            self.voice = type("Voice", (), {"channel": voice_channel})
+
+    class FakeCollector:
+        def __init__(self, target_user_id: int):
+            self.target_user_id = int(target_user_id)
+            self.sample_rate = 48000
+
+        def mono_float32(self):
+            import numpy as np
+
+            return np.ones((self.sample_rate,), dtype=np.float32) * 0.1
+
+    tts = FakeTTS(tmp_path)
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
+    plain_vc = FakeVoiceClient()
+    recv_vc = FakeVoiceRecvClient()
+    channel = FakeVoiceChannel(plain_vc, channel_id=5, recv_voice_client=recv_vc)
+    member = FakeMember(123, channel)
+    guild = FakeGuild(1, member=member)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
+
+    q = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=plain_vc,
+        voice_channel_id=5,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[1].worker_task)
+
+    monkeypatch.setattr(bot_mod, "SingleUserPCMCollector", FakeCollector)
+    monkeypatch.setattr(bot_mod, "CLONE_RECORD_SECONDS", 0)
+    monkeypatch.setattr(bot_mod, "CLONE_MIN_SECONDS", 0)
+    monkeypatch.setattr(bot_mod.discord, "Member", FakeMember)
+
+    await bot._clone(interaction)
+
+    assert plain_vc.connected is False
+    assert channel.connect_calls
+    assert channel.connect_calls[-1]["cls"] is bot_mod.SafeVoiceRecvClient
+    assert bot.guild_state[1].voice_client is recv_vc
+    assert bot.guild_state[1].voice_receive_enabled is True
+    await cancel_task(bot.guild_state[1].worker_task)
 
 
 @pytest.mark.asyncio

@@ -203,6 +203,7 @@ class GuildState:
     text_channel_id: int
     queue: "asyncio.Queue[TTSJob]"
     worker_task: asyncio.Task | None
+    voice_receive_enabled: bool = False
     stream: GuildPCMStream | None = None
 
 
@@ -442,12 +443,65 @@ class Bot(discord.Client):
             drained += 1
         return drained
 
+    @staticmethod
+    def _voice_client_supports_receive(vc: discord.VoiceClient | None) -> bool:
+        if vc is None:
+            return False
+        marker = getattr(vc, "supports_receive", None)
+        if marker is not None:
+            return bool(marker)
+        return hasattr(vc, "listen") and hasattr(vc, "stop_listening")
+
+    async def _connect_voice_client(
+        self,
+        channel: discord.VoiceChannel,
+        *,
+        require_voice_recv: bool,
+        reconnect: bool = False,
+    ) -> tuple[discord.VoiceClient, bool]:
+        if require_voice_recv:
+            vc = await channel.connect(cls=SafeVoiceRecvClient, reconnect=reconnect)
+            return vc, True
+        vc = await channel.connect(reconnect=reconnect)
+        return vc, self._voice_client_supports_receive(vc)
+
+    async def _replace_voice_client(
+        self,
+        st: GuildState,
+        channel: discord.VoiceChannel,
+        *,
+        require_voice_recv: bool,
+    ) -> discord.VoiceClient:
+        try:
+            if st.voice_client.is_connected():
+                await st.voice_client.disconnect(force=True)
+        except Exception as exc:
+            LOG.warning(
+                "Disconnect before reconnect failed guild_id=%s channel_id=%s err=%s",
+                getattr(getattr(channel, "guild", None), "id", "unknown"),
+                channel.id,
+                exc,
+            )
+        new_vc, voice_receive_enabled = await self._connect_voice_client(
+            channel,
+            require_voice_recv=require_voice_recv,
+        )
+        st.voice_client = new_vc
+        st.voice_channel_id = int(channel.id)
+        st.voice_receive_enabled = voice_receive_enabled
+        if st.stream:
+            st.stream.close()
+        st.stream = None
+        return new_vc
+
     def _create_guild_state(
         self,
         guild_id: int,
         voice_client: discord.VoiceClient,
         voice_channel_id: int,
         text_channel_id: int,
+        *,
+        voice_receive_enabled: bool | None = None,
     ) -> GuildState:
         q: asyncio.Queue[TTSJob] = asyncio.Queue()
         st = GuildState(
@@ -456,6 +510,11 @@ class Bot(discord.Client):
             text_channel_id=text_channel_id,
             queue=q,
             worker_task=None,
+            voice_receive_enabled=(
+                self._voice_client_supports_receive(voice_client)
+                if voice_receive_enabled is None
+                else bool(voice_receive_enabled)
+            ),
             stream=None,
         )
         self.guild_state[guild_id] = st
@@ -628,11 +687,21 @@ class Bot(discord.Client):
             return
 
         vc = interaction.guild.voice_client
-        if vc and vc.is_connected():
-            await vc.move_to(channel)
-        else:
-            # IMPORTANT: VoiceRecvClient enables receiving audio for /clone
-            vc = await channel.connect(cls=SafeVoiceRecvClient)
+        try:
+            if vc and vc.is_connected():
+                await vc.move_to(channel)
+            else:
+                vc, _voice_receive_enabled = await self._connect_voice_client(
+                    channel,
+                    require_voice_recv=False,
+                )
+        except Exception as exc:
+            LOG.warning("Join failed guild_id=%s channel_id=%s err=%s", interaction.guild_id, channel.id, exc)
+            await interaction.response.send_message(
+                "Failed to join that voice channel. Check my voice permissions and try again.",
+                ephemeral=True,
+            )
+            return
 
         # Replace existing state cleanly
         old = self.guild_state.get(guild_id)
@@ -648,6 +717,7 @@ class Bot(discord.Client):
             voice_client=vc,
             voice_channel_id=int(channel.id),
             text_channel_id=int(interaction.channel_id),
+            voice_receive_enabled=self._voice_client_supports_receive(vc),
         )
         if self._cloning_channels.get(guild_id) == int(channel.id):
             self._clone_joined[guild_id] = True
@@ -690,12 +760,18 @@ class Bot(discord.Client):
         channel = guild.get_channel(int(st.voice_channel_id))
         if not isinstance(channel, discord.VoiceChannel):
             return
+        require_voice_recv = bool(st.voice_receive_enabled or self._voice_client_supports_receive(vc))
         try:
-            new_vc = await channel.connect(cls=SafeVoiceRecvClient, reconnect=True)
+            new_vc, voice_receive_enabled = await self._connect_voice_client(
+                channel,
+                require_voice_recv=require_voice_recv,
+                reconnect=True,
+            )
         except Exception as exc:
             LOG.warning("Reconnect failed guild_id=%s channel_id=%s err=%s", guild_id, st.voice_channel_id, exc)
             return
         st.voice_client = new_vc
+        st.voice_receive_enabled = voice_receive_enabled
         if st.stream:
             st.stream.close()
         st.stream = None
@@ -751,32 +827,61 @@ class Bot(discord.Client):
             preexisting_connected = False
             if st and st.voice_client.is_connected() and int(st.voice_channel_id) == channel_id:
                 preexisting_connected = True
-            # Ensure bot is connected with VoiceRecvClient
-            if not st or not st.voice_client.is_connected():
-                # connect and create state
-                vc = await member.voice.channel.connect(cls=SafeVoiceRecvClient)
-                st = self._create_guild_state(
-                    guild_id=guild_id,
-                    voice_client=vc,
-                    voice_channel_id=int(member.voice.channel.id),
-                    text_channel_id=int(interaction.channel_id),
+            try:
+                has_voice_recv = bool(
+                    st
+                    and st.voice_client.is_connected()
+                    and (st.voice_receive_enabled or self._voice_client_supports_receive(st.voice_client))
                 )
-            else:
-                # move to caller channel (so we can hear them)
-                try:
-                    await st.voice_client.move_to(member.voice.channel)
-                    st.voice_channel_id = int(member.voice.channel.id)
-                except Exception as exc:
-                    LOG.warning(
-                        "Move to caller channel failed guild_id=%s channel_id=%s err=%s",
-                        interaction.guild_id,
-                        member.voice.channel.id,
-                        exc,
+                # Ensure bot is connected with VoiceRecvClient for recording.
+                if not st:
+                    vc, voice_receive_enabled = await self._connect_voice_client(
+                        member.voice.channel,
+                        require_voice_recv=True,
                     )
+                    st = self._create_guild_state(
+                        guild_id=guild_id,
+                        voice_client=vc,
+                        voice_channel_id=int(member.voice.channel.id),
+                        text_channel_id=int(interaction.channel_id),
+                        voice_receive_enabled=voice_receive_enabled,
+                    )
+                elif not has_voice_recv:
+                    vc = await self._replace_voice_client(
+                        st,
+                        member.voice.channel,
+                        require_voice_recv=True,
+                    )
+                else:
+                    vc = st.voice_client
+                    try:
+                        await vc.move_to(member.voice.channel)
+                        st.voice_channel_id = int(member.voice.channel.id)
+                        st.voice_receive_enabled = True
+                    except Exception as exc:
+                        LOG.warning(
+                            "Move to caller channel failed guild_id=%s channel_id=%s err=%s",
+                            interaction.guild_id,
+                            member.voice.channel.id,
+                            exc,
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "Clone voice connect failed guild_id=%s channel_id=%s err=%s",
+                    interaction.guild_id,
+                    member.voice.channel.id,
+                    exc,
+                )
+                await interaction.followup.send(
+                    "I couldn't connect with voice receive for cloning. "
+                    "Use `/join` for playback first, then retry `/clone` in a moment.",
+                    ephemeral=True,
+                )
+                return
 
             vc = st.voice_client
 
-            if not hasattr(vc, "listen") or not hasattr(vc, "stop_listening"):
+            if not self._voice_client_supports_receive(vc):
                 await interaction.followup.send(
                     "Voice receive is not enabled. Ensure you're connected with VoiceRecvClient "
                     "(discord-ext-voice-recv) and not plain discord.py VoiceClient.",

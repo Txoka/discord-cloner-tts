@@ -16,6 +16,7 @@ from tests.helpers.fakes import (
     FakeUser,
     FakeVoiceChannel,
     FakeVoiceClient,
+    FakeVoiceRecvClient,
     FakeMessage,
 )
 
@@ -108,7 +109,7 @@ async def test_clone_rejects_second_attempt_same_guild(tmp_path, monkeypatch):
     bot = Bot(tts=tts, admin_store=FakeAdminStore())
 
     vc = FakeVoiceClient()
-    channel = FakeVoiceChannel(vc)
+    channel = FakeVoiceChannel(vc, recv_voice_client=FakeVoiceRecvClient())
     member = FakeMember(123, channel)
     guild = FakeGuild(1, member=member)
     interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
@@ -135,8 +136,8 @@ async def test_clone_allows_parallel_guilds(tmp_path, monkeypatch):
 
     vc1 = FakeVoiceClient()
     vc2 = FakeVoiceClient()
-    channel1 = FakeVoiceChannel(vc1)
-    channel2 = FakeVoiceChannel(vc2)
+    channel1 = FakeVoiceChannel(vc1, recv_voice_client=FakeVoiceRecvClient())
+    channel2 = FakeVoiceChannel(vc2, recv_voice_client=FakeVoiceRecvClient())
     member1 = FakeMember(111, channel1)
     member2 = FakeMember(222, channel2)
     guild1 = FakeGuild(1, member=member1)

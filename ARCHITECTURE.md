@@ -44,6 +44,7 @@ Dependency compatibility note: `vllm` and `vllm-omni` must stay version-aligned 
 - Admin commands are only registered in debug guilds; other guilds have no admin behavior.
 - `/debug` is a global command that toggles admin commands for the current guild.
 - Admin disguises are stored per admin user and apply in any debug guild.
+- `/join` uses a standard Discord voice connection for playback; `/clone` upgrades or reconnects with `discord-ext-voice-recv` only when capture is needed.
 - While cloning, `/leave` is blocked and `/join` is restricted to the cloning channel; the bot disconnects after clone unless already joined (or joined during cloning).
 - `/join` refuses empty voice channels, and the bot auto-leaves after being alone for the configured timeout.
 

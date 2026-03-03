@@ -35,10 +35,10 @@ make logs
 ```
 
 ## Discord commands
-- `/join [channel]` - Join the caller's voice channel, or an explicitly provided one (must have at least one human).
+- `/join [channel]` - Join the caller's voice channel, or an explicitly provided one (must have at least one human). This uses a standard playback-only voice connection.
 - `/leave` - Leave voice chat and discard queued TTS/playback messages for the guild.
 - `/setchannel #channel` - Choose which text channel to read aloud.
-- `/clone` - Record a 20s Spanish sample to enroll your voice.
+- `/clone` - Record a 20s Spanish sample to enroll your voice. If needed, the bot reconnects with voice-receive enabled for the recording step.
 - `/forget` - Delete your enrolled voice prompt file.
 - `/disguise @user` - Admins only: speak using someone else's voice.
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
@@ -93,7 +93,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 
 ## Notes
 - The bot only speaks messages from users who have enrolled a voice.
-- Voice enrollment uses `discord-ext-voice-recv` to capture decoded PCM from Discord.
+- Voice enrollment uses `discord-ext-voice-recv` to capture decoded PCM from Discord, but normal `/join` playback stays on a plain voice client until recording is required.
 - Audio is synthesized in-memory (WAV bytes) and decoded to PCM for streaming playback.
 - Model weights and cache are mounted to `./models` by docker-compose.
 - Admin roles are stored in a SQLite database under `./data`.
@@ -109,6 +109,9 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - `ClientException: Already connected to a voice channel` on `/join` or `/clone`:
   - Usually means Discord has an active voice connection while the bot is trying to `connect()` again.
   - Workaround: run `/leave` then `/join` again, or wait a few seconds and retry.
+- `discord.errors.ConnectionClosed: ... WebSocket closed with 4017` while joining voice:
+  - This usually comes from the receive-capable voice handshake, not normal playback.
+  - `/join` now uses a standard voice client first. If you still see it during `/clone`, retry the clone command after the bot is already connected with `/join`.
 - `NotFound: Unknown interaction` on `/join`:
   - The interaction token likely expired before the response was sent.
   - Retry the command; if it keeps happening, the command handler may need to defer responses sooner.

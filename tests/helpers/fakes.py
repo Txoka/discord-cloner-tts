@@ -36,6 +36,7 @@ class FakeGuild:
 
 class FakeVoiceClient:
     def __init__(self) -> None:
+        self.supports_receive = False
         self.connected = True
         self.play_calls: list[bytes] = []
         self._sink = None
@@ -72,6 +73,12 @@ class FakeVoiceClient:
 
     def stop_listening(self) -> None:
         return None
+
+
+class FakeVoiceRecvClient(FakeVoiceClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.supports_receive = True
 
 
 class SpyVoiceClient(FakeVoiceClient):
@@ -111,14 +118,25 @@ class FakeGuildPCMStream:
 
 
 class FakeVoiceChannel:
-    def __init__(self, voice_client: FakeVoiceClient, channel_id: int = 1, members: list[Any] | None = None):
+    def __init__(
+        self,
+        voice_client: FakeVoiceClient,
+        channel_id: int = 1,
+        members: list[Any] | None = None,
+        recv_voice_client: FakeVoiceClient | None = None,
+    ):
         self._voice_client = voice_client
+        self._recv_voice_client = recv_voice_client if recv_voice_client is not None else voice_client
         self.name = "voice"
         self.id = int(channel_id)
         self.members = list(members) if members is not None else []
+        self.connect_calls: list[dict[str, Any]] = []
 
-    async def connect(self, cls=None):
-        return self._voice_client
+    async def connect(self, cls=None, **kwargs):
+        self.connect_calls.append({"cls": cls, "kwargs": dict(kwargs)})
+        if cls is None:
+            return self._voice_client
+        return self._recv_voice_client
 
 
 class FakeInteractionResponse:

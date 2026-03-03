@@ -203,11 +203,12 @@ class GuildState:
     text_channel_id: int
     queue: "asyncio.Queue[TTSJob]"
     worker_task: asyncio.Task | None
+    voice_receive_enabled: bool = False
     stream: GuildPCMStream | None = None
 
 
 class Bot(discord.Client):
-    def __init__(self, tts: TTSEngine, admin_store: AdminStore):
+    def __init__(self, tts: TTSEngine, admin_store: AdminStore, *, enable_debug_command: bool = True):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.messages = True
@@ -225,8 +226,10 @@ class Bot(discord.Client):
         self._cloning_users: set[int] = set()
         self._cloning_channels: Dict[int, int] = {}
         self._clone_joined: Dict[int, bool] = {}
-        self._disguises: Dict[int, Dict[int, int]] = {}
+        self._disguises: Dict[int, int] = dict(self.admin_store.list_disguises())
         self._admin_commands: list[app_commands.Command] = []
+        self._global_commands: list[app_commands.Command] = []
+        self._enable_debug_command = bool(enable_debug_command)
         self._global_queue_size = 0
         self._auto_leave_tasks: Dict[int, asyncio.Task] = {}
         self._register_admin_command_objects()
@@ -320,6 +323,15 @@ class Bot(discord.Client):
             callback=debugguildlist,
         )
 
+        async def debug(interaction: discord.Interaction):
+            await self._debug_current_guild(interaction)
+
+        debug_cmd = app_commands.Command(
+            name="debug",
+            description="Admins only: enable admin commands in this guild.",
+            callback=debug,
+        )
+
         self._admin_commands = [
             disguise_cmd,
             addadmin_cmd,
@@ -330,6 +342,12 @@ class Bot(discord.Client):
             removedebugguild_cmd,
             debugguildlist_cmd,
         ]
+        if not self._enable_debug_command:
+            self._admin_commands.append(debug_cmd)
+        if self._enable_debug_command:
+            self._global_commands = [debug_cmd]
+            for cmd in self._global_commands:
+                self.tree.add_command(cmd)
 
     @staticmethod
     def _trace_ms(trace: Dict[str, float], start: str, end: str) -> Optional[float]:
@@ -391,6 +409,9 @@ class Bot(discord.Client):
             return False
         return self.admin_store.is_admin(int(user_id))
 
+    def _is_admin_global(self, user_id: int) -> bool:
+        return self.admin_store.is_admin(int(user_id))
+
     def _is_superadmin(self, user_id: int, guild_id: int | None) -> bool:
         if not self._is_debug_guild(guild_id):
             return False
@@ -422,12 +443,65 @@ class Bot(discord.Client):
             drained += 1
         return drained
 
+    @staticmethod
+    def _voice_client_supports_receive(vc: discord.VoiceClient | None) -> bool:
+        if vc is None:
+            return False
+        marker = getattr(vc, "supports_receive", None)
+        if marker is not None:
+            return bool(marker)
+        return hasattr(vc, "listen") and hasattr(vc, "stop_listening")
+
+    async def _connect_voice_client(
+        self,
+        channel: discord.VoiceChannel,
+        *,
+        require_voice_recv: bool,
+        reconnect: bool = False,
+    ) -> tuple[discord.VoiceClient, bool]:
+        if require_voice_recv:
+            vc = await channel.connect(cls=SafeVoiceRecvClient, reconnect=reconnect)
+            return vc, True
+        vc = await channel.connect(reconnect=reconnect)
+        return vc, self._voice_client_supports_receive(vc)
+
+    async def _replace_voice_client(
+        self,
+        st: GuildState,
+        channel: discord.VoiceChannel,
+        *,
+        require_voice_recv: bool,
+    ) -> discord.VoiceClient:
+        try:
+            if st.voice_client.is_connected():
+                await st.voice_client.disconnect(force=True)
+        except Exception as exc:
+            LOG.warning(
+                "Disconnect before reconnect failed guild_id=%s channel_id=%s err=%s",
+                getattr(getattr(channel, "guild", None), "id", "unknown"),
+                channel.id,
+                exc,
+            )
+        new_vc, voice_receive_enabled = await self._connect_voice_client(
+            channel,
+            require_voice_recv=require_voice_recv,
+        )
+        st.voice_client = new_vc
+        st.voice_channel_id = int(channel.id)
+        st.voice_receive_enabled = voice_receive_enabled
+        if st.stream:
+            st.stream.close()
+        st.stream = None
+        return new_vc
+
     def _create_guild_state(
         self,
         guild_id: int,
         voice_client: discord.VoiceClient,
         voice_channel_id: int,
         text_channel_id: int,
+        *,
+        voice_receive_enabled: bool | None = None,
     ) -> GuildState:
         q: asyncio.Queue[TTSJob] = asyncio.Queue()
         st = GuildState(
@@ -436,6 +510,11 @@ class Bot(discord.Client):
             text_channel_id=text_channel_id,
             queue=q,
             worker_task=None,
+            voice_receive_enabled=(
+                self._voice_client_supports_receive(voice_client)
+                if voice_receive_enabled is None
+                else bool(voice_receive_enabled)
+            ),
             stream=None,
         )
         self.guild_state[guild_id] = st
@@ -608,11 +687,21 @@ class Bot(discord.Client):
             return
 
         vc = interaction.guild.voice_client
-        if vc and vc.is_connected():
-            await vc.move_to(channel)
-        else:
-            # IMPORTANT: VoiceRecvClient enables receiving audio for /clone
-            vc = await channel.connect(cls=SafeVoiceRecvClient)
+        try:
+            if vc and vc.is_connected():
+                await vc.move_to(channel)
+            else:
+                vc, _voice_receive_enabled = await self._connect_voice_client(
+                    channel,
+                    require_voice_recv=False,
+                )
+        except Exception as exc:
+            LOG.warning("Join failed guild_id=%s channel_id=%s err=%s", interaction.guild_id, channel.id, exc)
+            await interaction.response.send_message(
+                "Failed to join that voice channel. Check my voice permissions and try again.",
+                ephemeral=True,
+            )
+            return
 
         # Replace existing state cleanly
         old = self.guild_state.get(guild_id)
@@ -628,6 +717,7 @@ class Bot(discord.Client):
             voice_client=vc,
             voice_channel_id=int(channel.id),
             text_channel_id=int(interaction.channel_id),
+            voice_receive_enabled=self._voice_client_supports_receive(vc),
         )
         if self._cloning_channels.get(guild_id) == int(channel.id):
             self._clone_joined[guild_id] = True
@@ -670,12 +760,18 @@ class Bot(discord.Client):
         channel = guild.get_channel(int(st.voice_channel_id))
         if not isinstance(channel, discord.VoiceChannel):
             return
+        require_voice_recv = bool(st.voice_receive_enabled or self._voice_client_supports_receive(vc))
         try:
-            new_vc = await channel.connect(cls=SafeVoiceRecvClient, reconnect=True)
+            new_vc, voice_receive_enabled = await self._connect_voice_client(
+                channel,
+                require_voice_recv=require_voice_recv,
+                reconnect=True,
+            )
         except Exception as exc:
             LOG.warning("Reconnect failed guild_id=%s channel_id=%s err=%s", guild_id, st.voice_channel_id, exc)
             return
         st.voice_client = new_vc
+        st.voice_receive_enabled = voice_receive_enabled
         if st.stream:
             st.stream.close()
         st.stream = None
@@ -731,32 +827,61 @@ class Bot(discord.Client):
             preexisting_connected = False
             if st and st.voice_client.is_connected() and int(st.voice_channel_id) == channel_id:
                 preexisting_connected = True
-            # Ensure bot is connected with VoiceRecvClient
-            if not st or not st.voice_client.is_connected():
-                # connect and create state
-                vc = await member.voice.channel.connect(cls=SafeVoiceRecvClient)
-                st = self._create_guild_state(
-                    guild_id=guild_id,
-                    voice_client=vc,
-                    voice_channel_id=int(member.voice.channel.id),
-                    text_channel_id=int(interaction.channel_id),
+            try:
+                has_voice_recv = bool(
+                    st
+                    and st.voice_client.is_connected()
+                    and (st.voice_receive_enabled or self._voice_client_supports_receive(st.voice_client))
                 )
-            else:
-                # move to caller channel (so we can hear them)
-                try:
-                    await st.voice_client.move_to(member.voice.channel)
-                    st.voice_channel_id = int(member.voice.channel.id)
-                except Exception as exc:
-                    LOG.warning(
-                        "Move to caller channel failed guild_id=%s channel_id=%s err=%s",
-                        interaction.guild_id,
-                        member.voice.channel.id,
-                        exc,
+                # Ensure bot is connected with VoiceRecvClient for recording.
+                if not st:
+                    vc, voice_receive_enabled = await self._connect_voice_client(
+                        member.voice.channel,
+                        require_voice_recv=True,
                     )
+                    st = self._create_guild_state(
+                        guild_id=guild_id,
+                        voice_client=vc,
+                        voice_channel_id=int(member.voice.channel.id),
+                        text_channel_id=int(interaction.channel_id),
+                        voice_receive_enabled=voice_receive_enabled,
+                    )
+                elif not has_voice_recv:
+                    vc = await self._replace_voice_client(
+                        st,
+                        member.voice.channel,
+                        require_voice_recv=True,
+                    )
+                else:
+                    vc = st.voice_client
+                    try:
+                        await vc.move_to(member.voice.channel)
+                        st.voice_channel_id = int(member.voice.channel.id)
+                        st.voice_receive_enabled = True
+                    except Exception as exc:
+                        LOG.warning(
+                            "Move to caller channel failed guild_id=%s channel_id=%s err=%s",
+                            interaction.guild_id,
+                            member.voice.channel.id,
+                            exc,
+                        )
+            except Exception as exc:
+                LOG.warning(
+                    "Clone voice connect failed guild_id=%s channel_id=%s err=%s",
+                    interaction.guild_id,
+                    member.voice.channel.id,
+                    exc,
+                )
+                await interaction.followup.send(
+                    "I couldn't connect with voice receive for cloning. "
+                    "Use `/join` for playback first, then retry `/clone` in a moment.",
+                    ephemeral=True,
+                )
+                return
 
             vc = st.voice_client
 
-            if not hasattr(vc, "listen") or not hasattr(vc, "stop_listening"):
+            if not self._voice_client_supports_receive(vc):
                 await interaction.followup.send(
                     "Voice receive is not enabled. Ensure you're connected with VoiceRecvClient "
                     "(discord-ext-voice-recv) and not plain discord.py VoiceClient.",
@@ -883,7 +1008,8 @@ class Bot(discord.Client):
         target_id = int(target.id)
         caller_id = int(interaction.user.id)
         if target_id == caller_id:
-            self._disguises.get(guild_id, {}).pop(caller_id, None)
+            self._disguises.pop(caller_id, None)
+            self.admin_store.clear_disguise(caller_id)
             await interaction.response.send_message("Disguise cleared. Using your own voice.", ephemeral=True)
             return
 
@@ -894,7 +1020,8 @@ class Bot(discord.Client):
             )
             return
 
-        self._disguises.setdefault(guild_id, {})[caller_id] = target_id
+        self._disguises[caller_id] = target_id
+        self.admin_store.set_disguise(caller_id, target_id)
         await interaction.response.send_message(
             f"Disguise set. You will speak using {target.mention}'s voice.",
             ephemeral=True,
@@ -938,6 +1065,7 @@ class Bot(discord.Client):
         target_id = int(target.id)
         removed = self.admin_store.remove_admin(target_id)
         if removed:
+            self._disguises.pop(target_id, None)
             await interaction.response.send_message(f"Removed admin: {target.mention}.", ephemeral=True)
             LOG.info("Admin removed by user_id=%s target_id=%s", interaction.user.id, target_id)
             return
@@ -1001,6 +1129,36 @@ class Bot(discord.Client):
         await interaction.response.send_message(f"Enabled admin commands for guild_id={target_gid}.", ephemeral=True)
         LOG.info("Added debug guild_id=%s by user_id=%s", target_gid, interaction.user.id)
 
+    async def _debug_current_guild(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message("Guild-only command.", ephemeral=True)
+            return
+        if not self._is_admin_global(int(interaction.user.id)):
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        target_gid = int(interaction.guild.id)
+        if target_gid in self._debug_guilds:
+            removed = self.admin_store.remove_debug_guild(target_gid)
+            self._debug_guilds.discard(target_gid)
+            self._unregister_admin_commands_for_guild(target_gid)
+            await self.tree.sync(guild=discord.Object(id=target_gid))
+            if removed:
+                await interaction.response.send_message("Disabled admin commands for this guild.", ephemeral=True)
+                LOG.info(
+                    "Removed debug guild_id=%s by user_id=%s (self-debug)",
+                    target_gid,
+                    interaction.user.id,
+                )
+            else:
+                await interaction.response.send_message("Debug was not enabled for this guild.", ephemeral=True)
+            return
+        self.admin_store.add_debug_guild(target_gid)
+        self._debug_guilds.add(target_gid)
+        self._register_admin_commands_for_guild(target_gid)
+        await self.tree.sync(guild=discord.Object(id=target_gid))
+        await interaction.response.send_message("Enabled admin commands for this guild.", ephemeral=True)
+        LOG.info("Added debug guild_id=%s by user_id=%s (self-debug)", target_gid, interaction.user.id)
+
     async def _remove_debug_guild(self, interaction: discord.Interaction, guild_id: str | int) -> None:
         if not interaction.guild:
             await interaction.response.send_message("Guild-only command.", ephemeral=True)
@@ -1016,7 +1174,6 @@ class Bot(discord.Client):
             return
         removed = self.admin_store.remove_debug_guild(target_gid)
         self._debug_guilds.discard(target_gid)
-        self._disguises.pop(target_gid, None)
         self._unregister_admin_commands_for_guild(target_gid)
         await self.tree.sync(guild=discord.Object(id=target_gid))
         if removed:
@@ -1063,8 +1220,8 @@ class Bot(discord.Client):
         # Resolve voice id (admin disguise)
         author_id = int(message.author.id)
         voice_id = author_id
-        if self._is_debug_guild(int(message.guild.id)):
-            voice_id = self._disguises.get(int(message.guild.id), {}).get(author_id, author_id)
+        if self._is_debug_guild(int(message.guild.id)) and self._is_admin(author_id, int(message.guild.id)):
+            voice_id = self._disguises.get(author_id, author_id)
 
         # Only speak if target voice has an enrolled prompt file
         if not self.tts.prompt_exists(voice_id):
@@ -1205,6 +1362,8 @@ class Bot(discord.Client):
         await self._cancel_task(st.worker_task, name=f"{reason}-worker")
         drained = self._drain_queue(st.queue)
         self._decrement_global_queue(drained)
+        if self.tts is not None and hasattr(self.tts, "discard_guild"):
+            await self.tts.discard_guild(guild_id)
         if st.stream:
             st.stream.close()
         try:

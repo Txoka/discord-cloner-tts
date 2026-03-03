@@ -19,6 +19,12 @@ DEFAULT_LANGUAGE = os.environ.get("QWEN_TTS_LANG", "Auto")
 MAX_NEW_TOKENS = int(os.environ.get("QWEN_TTS_MAX_NEW_TOKENS", "2048"))
 LOG_LEVEL = os.environ.get("QWEN_TTS_LOG_LEVEL", "INFO")
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 # Admins
 DISCORD_SUPERADMIN_IDS = os.environ.get("DISCORD_SUPERADMIN_IDS", "")
 if not DISCORD_SUPERADMIN_IDS:
@@ -27,6 +33,7 @@ SUPERADMIN_IDS = [int(x) for x in (s.strip() for s in DISCORD_SUPERADMIN_IDS.spl
 
 DISCORD_DEBUG_GUILD_IDS = os.environ.get("DISCORD_DEBUG_GUILD_IDS", "")
 DEBUG_GUILD_IDS = [int(x) for x in (s.strip() for s in DISCORD_DEBUG_GUILD_IDS.split(",")) if x]
+DISCORD_DEBUG_COMMAND_ENABLED = _env_bool("DISCORD_DEBUG_COMMAND_ENABLED", True)
 
 # Volume normalization (simple RMS normalization per utterance)
 NORM_MODE = os.environ.get("QWEN_TTS_NORM", "none")  # none|rms|peak

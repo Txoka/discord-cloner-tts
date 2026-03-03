@@ -10,6 +10,7 @@ from app.config import (
     ADMIN_DB_PATH,
     DEVICE,
     DTYPE,
+    DISCORD_DEBUG_COMMAND_ENABLED,
     LOG_LEVEL,
     MAX_BATCH_SIZE,
     MODEL_ID,
@@ -52,7 +53,7 @@ def main() -> None:
         VOICES_DIR,
     )
 
-    bot = Bot(tts, admin_store)
+    bot = Bot(tts, admin_store, enable_debug_command=DISCORD_DEBUG_COMMAND_ENABLED)
 
     @bot.tree.command(name="join", description="Join your current voice channel, or a specified one.")
     @discord.app_commands.describe(channel="Optional voice channel to join")

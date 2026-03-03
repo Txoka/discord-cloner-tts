@@ -36,7 +36,7 @@ make logs
 
 ## Discord commands
 - `/join [channel]` - Join the caller's voice channel, or an explicitly provided one (must have at least one human).
-- `/leave` - Leave voice chat.
+- `/leave` - Leave voice chat and discard queued TTS/playback messages for the guild.
 - `/setchannel #channel` - Choose which text channel to read aloud.
 - `/clone` - Record a 20s Spanish sample to enroll your voice.
 - `/forget` - Delete your enrolled voice prompt file.
@@ -44,6 +44,7 @@ make logs
 - `/addadmin @user [role]` - Superadmins only: add an admin or superadmin.
 - `/removeadmin @user` - Superadmins only: remove an admin or superadmin.
 - `/adminlist` - Admins only: list all admins and their roles.
+- `/debug` - Admins only: toggle admin commands for the current guild.
 - `/adddebugguild <guild_id>` - Admins only: enable admin commands for a guild.
 - `/removedebugguild <guild_id>` - Admins only: disable admin commands for a guild.
 - `/debugguildlist` - Admins only: list guilds with admin commands enabled.
@@ -56,6 +57,7 @@ Environment variables (set in `.env`):
 DISCORD_TOKEN=...
 DISCORD_SUPERADMIN_IDS=441597233150951425   # Comma-separated IDs
 DISCORD_DEBUG_GUILD_IDS=                   # Comma-separated guild IDs
+DISCORD_DEBUG_COMMAND_ENABLED=true         # Enable global /debug (still available in debug guilds)
 
 # Model and runtime
 QWEN_TTS_MODEL=Qwen/Qwen3-TTS-12Hz-1.7B-Base
@@ -92,6 +94,7 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 ## Notes
 - The bot only speaks messages from users who have enrolled a voice.
 - Voice enrollment uses `discord-ext-voice-recv` to capture decoded PCM from Discord.
+- Discord voice transport depends on `discord.py[voice]` so the `davey` dependency is installed for modern Discord voice encryption.
 - Audio is synthesized in-memory (WAV bytes) and decoded to PCM for streaming playback.
 - Model weights and cache are mounted to `./models` by docker-compose.
 - Admin roles are stored in a SQLite database under `./data`.
@@ -102,6 +105,11 @@ DISCORD_ADMIN_DB_PATH=/app/data/admins.sqlite3
 - During `/clone`, `/leave` is blocked and `/join` can only target the cloning channel; if the bot wasn’t already in that channel and no `/join` happens during cloning, it disconnects afterward.
 
 ## Troubleshooting
+- `ModuleNotFoundError: No module named 'vllm.multimodal.processing.context'` at startup:
+  - This is an API drift between `vllm-omni` and `vllm`. Use the pinned pair in `requirements.txt` (`vllm==0.14.0`, `vllm-omni==0.14.0`) and rebuild the image.
+- `discord.errors.ConnectionClosed: ... WebSocket closed with 4017` on voice join:
+  - This can happen when the Discord voice stack is too old for current DAVE/E2EE negotiation.
+  - The repository now pins `discord.py[voice]==2.7.1`, which installs `davey`; rebuild the image so the new voice stack is actually present in the container.
 - `ClientException: Already connected to a voice channel` on `/join` or `/clone`:
   - Usually means Discord has an active voice connection while the bot is trying to `connect()` again.
   - Workaround: run `/leave` then `/join` again, or wait a few seconds and retry.

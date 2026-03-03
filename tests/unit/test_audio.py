@@ -81,27 +81,12 @@ def test_prepare_tts_pcm_invalid_bytes_returns_empty():
 def test_trim_silence_energy_from_file():
     from pathlib import Path
     import pytest
-    import subprocess
     import wave
 
     assets_dir = Path(__file__).resolve().parents[1] / "assets"
-    ogg_path = assets_dir / "vad_crop_audio.ogg"
-    if not ogg_path.exists():
-        pytest.skip("vad_crop_audio.ogg not provided yet")
-
-    wav_path = assets_dir / "vad_raw.wav"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            str(ogg_path),
-            str(wav_path),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    wav_path = assets_dir / "vad_crop_audio.wav"
+    if not wav_path.exists():
+        pytest.skip("vad_crop_audio.wav not provided yet")
 
     with wave.open(str(wav_path), "rb") as wf:
         sr = wf.getframerate()
@@ -109,8 +94,6 @@ def test_trim_silence_energy_from_file():
         nch = wf.getnchannels()
         sampwidth = wf.getsampwidth()
         raw = wf.readframes(n)
-
-    wav_path.unlink(missing_ok=True)
 
     assert sampwidth == 2
     x = np.frombuffer(raw, dtype=np.int16)

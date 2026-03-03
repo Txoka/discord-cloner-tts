@@ -15,6 +15,7 @@ from tests.helpers.fakes import (
     FakeUser,
     FakeVoiceChannel,
     FakeVoiceClient,
+    FakeVoiceRecvClient,
     SpyVoiceClient,
 )
 
@@ -25,6 +26,9 @@ class FakePCMAudio:
 
 
 class FakeAdminStore:
+    def __init__(self):
+        self._disguises: dict[int, int] = {}
+
     def is_admin(self, user_id: int) -> bool:
         return True
 
@@ -48,6 +52,18 @@ class FakeAdminStore:
 
     def list_debug_guilds(self):
         return [1, 2]
+
+    def list_disguises(self) -> dict[int, int]:
+        return dict(self._disguises)
+
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        self._disguises[int(user_id)] = int(target_id)
+
+    def clear_disguise(self, user_id: int) -> bool:
+        return self._disguises.pop(int(user_id), None) is not None
+
+    def get_disguise(self, user_id: int):
+        return self._disguises.get(int(user_id))
 
 
 def test_single_user_pcm_collector_ignores_other_user():
@@ -121,6 +137,91 @@ async def test_join_refuses_empty_channel():
     await bot._join(interaction, empty_channel)
     assert interaction.response.messages
     assert "empty voice channel" in interaction.response.messages[-1].lower()
+
+
+@pytest.mark.asyncio
+async def test_join_uses_plain_voice_client():
+    bot = Bot(tts=None, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    guild = FakeGuild(1)
+    user = FakeUser(5)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=user, guild=guild)
+    channel = FakeVoiceChannel(FakeVoiceClient(), channel_id=123, members=[user])
+
+    await bot._join(interaction, channel)
+
+    assert channel.connect_calls
+    assert channel.connect_calls[-1]["cls"] is None
+    assert bot.guild_state[1].voice_receive_enabled is False
+    await cancel_task(bot.guild_state[1].worker_task)
+
+
+@pytest.mark.asyncio
+async def test_clone_upgrades_plain_voice_client_to_receive_client(monkeypatch, tmp_path):
+    class FakeTTS:
+        def __init__(self, voices_dir):
+            self._voices_dir = voices_dir
+            self.prompt_cache = {}
+
+        def prompt_path(self, user_id: int):
+            return self._voices_dir / f"{user_id}.pt"
+
+        def build_clone_prompt_items(self, ref_audio, ref_text):
+            return [object()]
+
+        def save_prompt_items_pt(self, prompt_items, out_pt):
+            out_pt.write_bytes(b"ok")
+
+        def set_prompt_exists(self, user_id: int, exists: bool) -> None:
+            return None
+
+    class FakeMember:
+        def __init__(self, user_id: int, voice_channel: FakeVoiceChannel):
+            self.id = int(user_id)
+            self.voice = type("Voice", (), {"channel": voice_channel})
+
+    class FakeCollector:
+        def __init__(self, target_user_id: int):
+            self.target_user_id = int(target_user_id)
+            self.sample_rate = 48000
+
+        def mono_float32(self):
+            import numpy as np
+
+            return np.ones((self.sample_rate,), dtype=np.float32) * 0.1
+
+    tts = FakeTTS(tmp_path)
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
+    plain_vc = FakeVoiceClient()
+    recv_vc = FakeVoiceRecvClient()
+    channel = FakeVoiceChannel(plain_vc, channel_id=5, recv_voice_client=recv_vc)
+    member = FakeMember(123, channel)
+    guild = FakeGuild(1, member=member)
+    interaction = FakeInteraction(guild_id=1, channel_id=10, user=member, guild=guild)
+
+    q = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=plain_vc,
+        voice_channel_id=5,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[1].worker_task)
+
+    monkeypatch.setattr(bot_mod, "SingleUserPCMCollector", FakeCollector)
+    monkeypatch.setattr(bot_mod, "CLONE_RECORD_SECONDS", 0)
+    monkeypatch.setattr(bot_mod, "CLONE_MIN_SECONDS", 0)
+    monkeypatch.setattr(bot_mod.discord, "Member", FakeMember)
+
+    await bot._clone(interaction)
+
+    assert plain_vc.connected is False
+    assert channel.connect_calls
+    assert channel.connect_calls[-1]["cls"] is bot_mod.SafeVoiceRecvClient
+    assert bot.guild_state[1].voice_client is recv_vc
+    assert bot.guild_state[1].voice_receive_enabled is True
+    await cancel_task(bot.guild_state[1].worker_task)
 
 
 @pytest.mark.asyncio
@@ -283,6 +384,40 @@ async def test_on_message_rejects_when_queue_full(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_leave_discards_guild_queues(monkeypatch):
+    class FakeTTS:
+        def __init__(self) -> None:
+            self.discarded: list[int] = []
+
+        async def discard_guild(self, guild_id: int) -> int:
+            self.discarded.append(int(guild_id))
+            return 0
+
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[1] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=1,
+        text_channel_id=1,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[1].worker_task)
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    await q.put(TTSJob(tts_future=fut))
+
+    await bot._leave_guild(1, reason="test")
+
+    assert 1 not in bot.guild_state
+    assert fut.cancelled()
+    assert tts.discarded == [1]
+
+
+@pytest.mark.asyncio
 async def test_admin_disabled_ignores_disguise(monkeypatch):
     class FakeTTS:
         def prompt_exists(self, user_id: int) -> bool:
@@ -297,7 +432,7 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 
     tts = FakeTTS()
     bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
-    bot._disguises.setdefault(1, {})[5] = 99
+    bot._disguises[5] = 99
 
     guild = FakeGuild(1)
     channel = FakeChannel(10)
@@ -316,6 +451,43 @@ async def test_admin_disabled_ignores_disguise(monkeypatch):
 
     await bot.on_message(msg)
     assert tts.last[1] == 5
+
+
+@pytest.mark.asyncio
+async def test_admin_enabled_applies_disguise_across_debug_guilds(monkeypatch):
+    class FakeTTS:
+        def prompt_exists(self, user_id: int) -> bool:
+            return True
+
+        async def enqueue(self, guild_id: int, user_id: int, text: str):
+            loop = asyncio.get_running_loop()
+            fut = loop.create_future()
+            fut.set_result(b"wav")
+            self.last = (guild_id, user_id, text)
+            return fut
+
+    tts = FakeTTS()
+    bot = Bot(tts=tts, admin_store=FakeAdminStore())  # type: ignore[arg-type]
+    bot._debug_guilds.update({1, 2})
+    bot._disguises[5] = 99
+
+    guild = FakeGuild(2)
+    channel = FakeChannel(10)
+    user = FakeUser(5)
+    msg = FakeMessage(guild=guild, channel=channel, author=user, clean_content="hi")
+
+    q: asyncio.Queue[TTSJob] = asyncio.Queue()
+    bot.guild_state[2] = GuildState(
+        voice_client=FakeVoiceClient(),
+        voice_channel_id=2,
+        text_channel_id=10,
+        queue=q,
+        worker_task=asyncio.create_task(asyncio.sleep(0)),
+    )
+    await cancel_task(bot.guild_state[2].worker_task)
+
+    await bot.on_message(msg)
+    assert tts.last[1] == 99
 
 
 @pytest.mark.asyncio
@@ -363,3 +535,102 @@ async def test_debug_guild_list():
     interaction = FakeInteraction()
     await bot._debug_guild_list(interaction)
     assert "2" in interaction.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_debug_command_enables_current_guild(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def __init__(self):
+            super().__init__()
+            self._guilds: set[int] = set()
+
+        def list_debug_guilds(self):
+            return list(self._guilds)
+
+        def add_debug_guild(self, guild_id: int) -> None:
+            self._guilds.add(int(guild_id))
+
+        def remove_debug_guild(self, guild_id: int) -> bool:
+            existed = int(guild_id) in self._guilds
+            self._guilds.discard(int(guild_id))
+            return existed
+
+    class FakeInteraction:
+        def __init__(self):
+            self.guild = type("Guild", (), {"id": 9})()
+            self.user = FakeUser(1)
+            self.response = type("Resp", (), {"send_message": self._send})()
+            self.messages = []
+
+        async def _send(self, content: str, ephemeral: bool = True):
+            self.messages.append(content)
+
+    bot = Bot(tts=None, admin_store=FakeStore())  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    interaction = FakeInteraction()
+    await bot._debug_current_guild(interaction)
+    assert 9 in bot._debug_guilds
+    assert interaction.messages
+    interaction.messages = []
+    await bot._debug_current_guild(interaction)
+    assert 9 not in bot._debug_guilds
+    assert interaction.messages
+
+
+def test_debug_command_can_be_disabled():
+    bot = Bot(tts=None, admin_store=FakeAdminStore(), enable_debug_command=False)  # type: ignore[arg-type]
+    names = [cmd.name for cmd in bot.tree.get_commands()]
+    assert "debug" not in names
+
+
+@pytest.mark.asyncio
+async def test_debug_command_disabled_not_synced(monkeypatch):
+    bot = Bot(tts=None, admin_store=FakeAdminStore(), enable_debug_command=False)  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    await bot.setup_hook()
+    names = [cmd.name for cmd in bot.tree.get_commands()]
+    assert "debug" not in names
+
+
+@pytest.mark.asyncio
+async def test_debug_command_disabled_still_in_debug_guild(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def list_debug_guilds(self):
+            return [1]
+
+    bot = Bot(tts=None, admin_store=FakeStore(), enable_debug_command=False)  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    await bot.setup_hook()
+    guild_cmds = [c.name for c in bot.tree.get_commands(guild=bot_mod.discord.Object(id=1))]
+    assert "debug" in guild_cmds
+
+
+@pytest.mark.asyncio
+async def test_debug_guilds_bypass_command_restrictions(monkeypatch):
+    class FakeStore(FakeAdminStore):
+        def list_debug_guilds(self):
+            return [1]
+
+    bot = Bot(tts=None, admin_store=FakeStore(), enable_debug_command=False)  # type: ignore[arg-type]
+
+    async def fake_sync(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(bot.tree, "sync", fake_sync)
+    await bot.setup_hook()
+    guild_cmds = [c.name for c in bot.tree.get_commands(guild=bot_mod.discord.Object(id=1))]
+    assert "addadmin" in guild_cmds
+    assert "disguise" in guild_cmds
+    assert "debugguildlist" in guild_cmds

@@ -63,6 +63,15 @@ class AdminStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS admin_disguises (
+                    user_id INTEGER PRIMARY KEY,
+                    target_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
             conn.commit()
 
     def bootstrap_superadmins(self) -> None:
@@ -139,6 +148,41 @@ class AdminStore:
             rows = conn.execute("SELECT guild_id FROM admin_guilds ORDER BY guild_id").fetchall()
         return [int(r["guild_id"]) for r in rows]
 
+    def set_disguise(self, user_id: int, target_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO admin_disguises (user_id, target_id)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET target_id = excluded.target_id
+                """,
+                (int(user_id), int(target_id)),
+            )
+            conn.commit()
+
+    def clear_disguise(self, user_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM admin_disguises WHERE user_id = ?", (int(user_id),))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def get_disguise(self, user_id: int) -> Optional[int]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT target_id FROM admin_disguises WHERE user_id = ?",
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            return None
+        return int(row["target_id"])
+
+    def list_disguises(self) -> dict[int, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, target_id FROM admin_disguises ORDER BY user_id"
+            ).fetchall()
+        return {int(r["user_id"]): int(r["target_id"]) for r in rows}
+
     def add_debug_guild(self, guild_id: int) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -177,5 +221,6 @@ class AdminStore:
             return False
         with self._connect() as conn:
             cur = conn.execute("DELETE FROM admin_roles WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM admin_disguises WHERE user_id = ?", (user_id,))
             conn.commit()
             return cur.rowcount > 0

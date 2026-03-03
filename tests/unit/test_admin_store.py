@@ -69,6 +69,29 @@ def test_admin_store_debug_guilds(tmp_path):
     assert store.list_debug_guilds() == [2, 4]
 
 
+def test_admin_store_disguises(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
+    store.init_schema()
+    assert store.get_disguise(1) is None
+    store.set_disguise(1, 9)
+    assert store.get_disguise(1) == 9
+    assert store.list_disguises() == {1: 9}
+    assert store.clear_disguise(1) is True
+    assert store.get_disguise(1) is None
+
+
+def test_admin_store_remove_admin_clears_disguise(tmp_path):
+    db_path = tmp_path / "admins.sqlite3"
+    store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
+    store.init_schema()
+    store.add_role(2, "admin")
+    store.set_disguise(2, 9)
+    assert store.get_disguise(2) == 9
+    assert store.remove_admin(2) is True
+    assert store.get_disguise(2) is None
+
+
 def test_admin_store_migrates_legacy_table(tmp_path):
     db_path = tmp_path / "admins.sqlite3"
     store = AdminStore(db_path, master_superadmins=[], debug_guild_ids=[])
